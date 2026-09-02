@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openclaw"
+version = "0.1.0"
+description = "Open Claw: watch Schengen visa appointment slots and alert on availability."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+
+[project.scripts]
+openclaw = "openclaw.cli:main"
+
+[tool.setuptools]
+packages = ["openclaw", "openclaw.providers"]

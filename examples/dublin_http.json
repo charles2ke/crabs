@@ -1,0 +1,34 @@
+{
+  "metadata": {
+    "name": "Dublin Schengen slot watch (live HTTP/JSON endpoint)",
+    "notes": "Replace the URL with the JSON availability endpoint of the portal you are entitled to poll, and respect its terms of service and rate limits."
+  },
+  "poll_interval": 600,
+  "jitter": 120,
+  "earliest": "2026-09-01",
+  "latest": "2027-03-31",
+  "state_file": ".openclaw/dublin-live-state.json",
+  "notifiers": [
+    { "type": "console" },
+    { "type": "webhook", "url": "${OPENCLAW_WEBHOOK_URL}" }
+  ],
+  "watches": [
+    {
+      "country_from": "IE",
+      "country_to": "FR",
+      "city": "Dublin",
+      "visa_category": "short-stay",
+      "provider": "http-json",
+      "options": {
+        "url": "https://example.invalid/api/centres/dublin-fr/availability",
+        "headers": { "X-Api-Token": "${OPENCLAW_API_TOKEN}" },
+        "items_key": "dates",
+        "date_key": "date",
+        "date_format": "%Y-%m-%d",
+        "time_key": "time",
+        "seats_key": "available",
+        "booking_url": "https://example.invalid/book/dublin-fr"
+      }
+    }
+  ]
+}
