@@ -1,0 +1,44 @@
+{
+  "metadata": {
+    "name": "Dublin Schengen slot watch",
+    "notes": "Applicants living in Ireland (IE) watching Schengen consulates/visa centres in Dublin."
+  },
+  "poll_interval": 300,
+  "jitter": 60,
+  "earliest": "2026-09-01",
+  "latest": "2026-12-31",
+  "state_file": ".openclaw/dublin-state.json",
+  "notifiers": [
+    { "type": "console" },
+    { "type": "file", "path": ".openclaw/dublin-alerts.jsonl" }
+  ],
+  "watches": [
+    {
+      "country_from": "IE",
+      "country_to": "FR",
+      "city": "Dublin",
+      "visa_category": "short-stay",
+      "provider": "mock",
+      "options": {
+        "booking_url": "https://example.invalid/dublin/fr/book",
+        "slots": [
+          { "date": "2026-09-14", "time": "09:20", "seats": 2 },
+          { "date": "2026-10-02", "time": "11:00" }
+        ]
+      }
+    },
+    {
+      "country_from": "IE",
+      "country_to": "ES",
+      "city": "Dublin",
+      "visa_category": "short-stay",
+      "provider": "mock",
+      "options": {
+        "booking_url": "https://example.invalid/dublin/es/book",
+        "slots": [
+          { "date": "2026-09-28", "time": "14:45", "seats": 1 }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.openclaw/
+build/
+dist/
+*.egg-info/
+.venv/
