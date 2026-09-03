@@ -105,10 +105,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         if args.validate_config or args.dry_run:
-            config, missing = inspect_config(args.config)
+            config = inspect_config(args.config)
         else:
             config = load_config(args.config)
-            missing = ()
     except ConfigError as exc:
         LOGGER.error("%s", exc, extra={"event": "config_error"})
         return EXIT_CONFIG_ERROR
@@ -122,13 +121,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_NO_SLOTS
 
     if args.validate_config or args.dry_run:
-        if missing:
-            LOGGER.error(
-                "missing environment variables: %s",
-                ", ".join(missing),
-                extra={"event": "config_error"},
-            )
-            return EXIT_CONFIG_ERROR
         try:
             _print_inventory(config)
         except (NotifierError, ProviderError) as exc:

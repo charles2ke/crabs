@@ -342,7 +342,7 @@ def load_config(path: str | Path) -> Config:
     return parse_config(raw)
 
 
-def inspect_config(path: str | Path) -> tuple[Config, tuple[str, ...]]:
+def inspect_config(path: str | Path) -> Config:
     """Load config for offline diagnostics and report missing env names."""
     config_path = Path(path).expanduser()
     try:
@@ -356,5 +356,4 @@ def inspect_config(path: str | Path) -> tuple[Config, tuple[str, ...]]:
     missing = missing_env_vars(raw)
     if missing:
         raise ConfigError(f"missing environment variables: {', '.join(missing)}")
-    config = parse_config(raw)
-    return config, missing
+    return parse_config(raw)
