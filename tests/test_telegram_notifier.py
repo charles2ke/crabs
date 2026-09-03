@@ -203,6 +203,16 @@ class TelegramNotifierTests(unittest.TestCase):
         self.assertEqual(sleeps, [2.0])
         self.assertEqual(len(session.requests), 2)
 
+    def test_429_without_retry_after_does_not_retry_immediately(self):
+        session = FakeSession([(429, {"ok": False, "description": "Too Many Requests"})])
+
+        with self.assertRaises(NotifierError):
+            TelegramNotifier(TOKEN, "chat-1", session=session, sleeper=lambda _: None).send(
+                make_alert((Slot(Watch("IE", "FR", "Dublin"), date(2026, 9, 14)),))
+            )
+
+        self.assertEqual(len(session.requests), 1)
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

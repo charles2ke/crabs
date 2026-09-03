@@ -172,19 +172,22 @@ class TelegramNotifier(Notifier):
         continuation_header = self._format_header(alert, continuation=True)
         messages: list[str] = []
         current = header
+        current_slots = 0
         for slot in alert.slots:
             line = self._format_slot(slot)
             candidate = f"{current}\n{line}"
             if len(candidate) <= self.message_limit:
                 current = candidate
+                current_slots += 1
                 continue
-            if current != header and current != continuation_header:
-                messages.append(current)
-                current = f"{continuation_header}\n{line}"
-            else:
-                current = candidate
+            if current_slots == 0:
+                raise NotifierError("telegram message slot line exceeds Telegram length limit")
+
+            messages.append(current)
+            current = f"{continuation_header}\n{line}"
             if len(current) > self.message_limit:
                 raise NotifierError("telegram message slot line exceeds Telegram length limit")
+            current_slots = 1
         messages.append(current)
         return messages
 
@@ -246,11 +249,15 @@ class TelegramNotifier(Notifier):
             return
 
         retry_after = self._retry_after(response)
-        if allow_retry and (status == 429 or retry_after is not None):
-            if retry_after is not None and 0 <= retry_after <= MAX_TELEGRAM_RETRY_AFTER:
+        if (
+            allow_retry
+            and retry_after is not None
+            and 0 <= retry_after <= MAX_TELEGRAM_RETRY_AFTER
+        ):
+            if status == 429 or response.get("ok") is not True:
                 self.sleeper(retry_after)
-            self._post(payload, allow_retry=False)
-            return
+                self._post(payload, allow_retry=False)
+                return
 
         description = str(response.get("description") or "Telegram API error")
         raise NotifierError(
