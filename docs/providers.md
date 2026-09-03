@@ -40,6 +40,43 @@ reads `expires_key`, and applies `header`/`header_format`. Basic auth uses
 `username` and `password`. All credential values should come from environment
 variables.
 
+```jsonc
+"auth": {
+  "type": "token",
+  "login_url": "https://portal.example/api/auth",
+  "body": {"email": "${OPENCLAW_USER}", "password": "${OPENCLAW_PASS}"},
+  "token_key": "access_token",
+  "expires_key": "expires_in",
+  "header": "Authorization",
+  "header_format": "******"
+}
+```
+
+```jsonc
+"auth": {
+  "type": "basic",
+  "username": "${OPENCLAW_USER}",
+  "password": "${OPENCLAW_PASS}"
+}
+```
+
 Adapters reject sign-in pages, malformed payloads, and CAPTCHA/anti-bot gates.
 They do not circumvent controls. Confirm portal terms and local law and stop
 polling when requested.
+
+## Adding a provider
+
+```python
+from openclaw import Provider, register_provider
+
+class MyPortalProvider(Provider):
+    name = "my-portal"
+
+    def fetch(self, watch):
+        ...  # return a list of openclaw.Slot
+
+register_provider(MyPortalProvider.name, MyPortalProvider)
+```
+
+Keep endpoint parsing pure and add offline fixtures; see
+[CONTRIBUTING.md](../CONTRIBUTING.md).

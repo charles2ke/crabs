@@ -21,6 +21,20 @@ then configure:
  "chat_id": "${OPENCLAW_TELEGRAM_CHAT_ID}", "disable_notification": false}
 ```
 
+```bash
+export OPENCLAW_TELEGRAM_BOT_TOKEN="paste-your-botfather-token"
+export OPENCLAW_TELEGRAM_CHAT_ID="123456789"
+python -m openclaw --config examples/dublin_telegram.json --once
+```
+
+```text
+2 new Schengen slot(s)
+Centre: Dublin (IE)
+Destination: FR
+Visa category: short-stay
+• 2026-09-14 09:20 — 2 seat(s) — booking link
+```
+
 Messages show centre, origin, destination, category, and slot details. Values and
 links are HTML escaped, previews are disabled, long digests split on slot
 boundaries, and HTTP 429 is retried once for a positive bounded `retry_after`.
