@@ -382,8 +382,8 @@ class Monitor:
             if stale_for >= timedelta(hours=float(settings["max_stale_hours"])):
                 reasons.append(f"no slots seen for {settings['max_stale_hours']} hour(s)")
 
-        self.state.save()
         if not reasons or record.get("warning_active"):
+            self.state.save()
             return None
         record["warning_active"] = True
         self.state.save()
@@ -529,8 +529,9 @@ class Monitor:
         now = self.clock()
         if self._is_quiet(alert.watch, now) or not self._can_dispatch(alert.watch, now):
             serialized = self._serialize_alert(alert)
-            if serialized not in self._pending():
-                self._pending().append(serialized)
+            pending = self._pending()
+            if serialized not in pending:
+                pending.append(serialized)
                 self.state.save()
             LOGGER.info(
                 "held %s alert for %s",
