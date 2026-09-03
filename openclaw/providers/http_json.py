@@ -28,11 +28,11 @@ import urllib.request
 from datetime import datetime
 from typing import Any
 
+from ..auth import MAX_RESPONSE_BYTES, Session, redact_url
 from ..models import Slot, Watch
-from .base import Provider, ProviderError, register_provider
+from .base import AuthenticationError, Provider, ProviderError, register_provider
 
 DEFAULT_TIMEOUT = 20.0
-MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 
 
 class HttpJsonProvider(Provider):
@@ -42,6 +42,7 @@ class HttpJsonProvider(Provider):
 
     def __init__(self, timeout: float = DEFAULT_TIMEOUT) -> None:
         self.timeout = timeout
+        self._sessions: dict[str, Session] = {}
 
     def fetch(self, watch: Watch) -> list[Slot]:
         options = dict(watch.options)
@@ -49,14 +50,34 @@ class HttpJsonProvider(Provider):
         if not url:
             raise ProviderError(f"watch {watch.label} is missing the 'url' option")
 
-        payload = self._get_json(url, options.get("headers") or {})
+        headers = options.get("headers") or {}
+        auth = options.get("auth") or {"type": "none"}
+        if str(auth.get("type", "none")).lower() == "none":
+            payload = self._get_json(url, headers)
+        else:
+            payload = self._get_json_with_auth(watch, url, headers, auth)
         items = self._extract_items(payload, options.get("items_key"))
         return self._build_slots(watch, items, options)
+
+    def _session_for(self, watch: Watch, auth: dict[str, Any]) -> Session:
+        key = "|".join(
+            [
+                watch.country_from,
+                watch.country_to,
+                watch.city,
+                watch.visa_category,
+                str(auth.get("type", "none")).lower(),
+                str(auth.get("login_url", "")),
+            ]
+        )
+        if key not in self._sessions:
+            self._sessions[key] = Session(auth, timeout=self.timeout)
+        return self._sessions[key]
 
     def _get_json(self, url: str, headers: dict[str, str]) -> Any:
         scheme = urllib.parse.urlparse(url).scheme.lower()
         if scheme not in ("http", "https"):
-            raise ProviderError(f"unsupported URL scheme {scheme!r} for {url!r}")
+            raise ProviderError(f"unsupported URL scheme {scheme!r} for {redact_url(url)!r}")
 
         request = urllib.request.Request(url, headers={"Accept": "application/json"})
         for key, value in headers.items():
@@ -67,14 +88,57 @@ class HttpJsonProvider(Provider):
             ) as response:
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
         except (urllib.error.URLError, OSError) as exc:
-            raise ProviderError(f"request to {url!r} failed: {exc}") from exc
+            raise ProviderError(f"request to {redact_url(url)!r} failed: {exc}") from exc
 
         if len(raw) > MAX_RESPONSE_BYTES:
-            raise ProviderError(f"response from {url!r} is too large")
+            raise ProviderError(f"response from {redact_url(url)!r} is too large")
+        return self._decode_json(url, raw)
+
+    def _get_json_with_auth(
+        self, watch: Watch, url: str, headers: dict[str, str], auth: dict[str, Any]
+    ) -> Any:
+        session = self._session_for(watch, auth)
+        relogin = False
+        for attempt in range(2):
+            try:
+                session.ensure_authenticated(force=relogin)
+                status, raw = session.request(
+                    url,
+                    headers={"Accept": "application/json", **headers},
+                    expect_json=True,
+                )
+            except AuthenticationError as exc:
+                if attempt == 0:
+                    relogin = True
+                    continue
+                raise AuthenticationError(
+                    f"session expired and re-login failed for watch {watch.label!r}"
+                ) from exc
+
+            if status in (401, 403):
+                if attempt == 0:
+                    relogin = True
+                    continue
+                raise AuthenticationError(
+                    f"session expired and re-login failed for watch {watch.label!r}: HTTP {status}"
+                )
+            if status >= 400:
+                raise ProviderError(f"request to {redact_url(url)!r} failed: HTTP {status}")
+            return self._decode_json(url, raw)
+        raise AuthenticationError(f"session expired and re-login failed for watch {watch.label!r}")
+
+    @staticmethod
+    def _decode_json(url: str, raw: bytes) -> Any:
+        stripped = raw.lstrip().lower()
+        if stripped.startswith(b"<!doctype html") or stripped.startswith(b"<html"):
+            raise ProviderError(
+                f"response from {redact_url(url)!r} looks like an HTML page, not JSON — "
+                "the portal may require sign in (configure an 'auth' block)"
+            )
         try:
             return json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ProviderError(f"response from {url!r} is not valid JSON: {exc}") from exc
+            raise ProviderError(f"response from {redact_url(url)!r} is not valid JSON: {exc}") from exc
 
     @staticmethod
     def _extract_items(payload: Any, items_key: str | None) -> list[Any]:
