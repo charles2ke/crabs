@@ -1,0 +1,43 @@
+{
+  "metadata": {
+    "name": "Dublin Schengen slot watch with Telegram alerts",
+    "notes": "Offline example using the mock provider. Bot token and chat id are read from the environment."
+  },
+  "poll_interval": 600,
+  "jitter": 120,
+  "earliest": "2026-09-01",
+  "latest": "2027-03-31",
+  "state_file": ".openclaw/dublin-telegram-state.json",
+  "notifiers": [
+    {
+      "type": "telegram",
+      "bot_token": "${OPENCLAW_TELEGRAM_BOT_TOKEN}",
+      "chat_id": "${OPENCLAW_TELEGRAM_CHAT_ID}"
+    }
+  ],
+  "watches": [
+    {
+      "country_from": "IE",
+      "country_to": "FR",
+      "city": "Dublin",
+      "visa_category": "short-stay",
+      "provider": "mock",
+      "options": {
+        "slots": [
+          {
+            "date": "2026-09-14",
+            "time": "09:20",
+            "seats": 2,
+            "booking_url": "https://example.invalid/dublin/fr/book"
+          },
+          {
+            "date": "2026-10-02",
+            "time": "11:00",
+            "seats": 1,
+            "booking_url": "https://example.invalid/dublin/fr/book"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -80,6 +80,59 @@ class ConfigTests(unittest.TestCase):
             del os.environ["OPENCLAW_TEST_HOOK"]
         self.assertEqual(config.notifiers[0]["url"], "https://hooks.example.invalid/abc")
 
+    def test_telegram_notifier_env_expansion(self):
+        import os
+
+        os.environ["OPENCLAW_TELEGRAM_BOT_TOKEN"] = "env-token"
+        os.environ["OPENCLAW_TELEGRAM_CHAT_ID"] = "987654"
+        try:
+            config = parse_config(
+                {
+                    **BASE,
+                    "notifiers": [
+                        {
+                            "type": "telegram",
+                            "bot_token": "${OPENCLAW_TELEGRAM_BOT_TOKEN}",
+                            "chat_id": "${OPENCLAW_TELEGRAM_CHAT_ID}",
+                        }
+                    ],
+                }
+            )
+        finally:
+            del os.environ["OPENCLAW_TELEGRAM_BOT_TOKEN"]
+            del os.environ["OPENCLAW_TELEGRAM_CHAT_ID"]
+        self.assertEqual(config.notifiers[0]["bot_token"], "env-token")
+        self.assertEqual(config.notifiers[0]["chat_id"], "987654")
+
+    def test_telegram_bot_token_must_use_env_placeholder(self):
+        with self.assertRaisesRegex(ConfigError, "telegram bot_token"):
+            parse_config(
+                {
+                    **BASE,
+                    "notifiers": [
+                        {
+                            "type": "telegram",
+                            "bot_token": "123456:literal-token",
+                            "chat_id": "${OPENCLAW_TELEGRAM_CHAT_ID}",
+                        }
+                    ],
+                }
+            )
+
+    def test_load_dublin_telegram_example(self):
+        import os
+
+        os.environ["OPENCLAW_TELEGRAM_BOT_TOKEN"] = "env-token"
+        os.environ["OPENCLAW_TELEGRAM_CHAT_ID"] = "987654"
+        try:
+            config = load_config(
+                Path(__file__).resolve().parents[1] / "examples" / "dublin_telegram.json"
+            )
+        finally:
+            del os.environ["OPENCLAW_TELEGRAM_BOT_TOKEN"]
+            del os.environ["OPENCLAW_TELEGRAM_CHAT_ID"]
+        self.assertEqual(config.notifiers[0]["type"], "telegram")
+
     def test_load_dublin_example(self):
         config = load_config(Path(__file__).resolve().parents[1] / "examples" / "dublin.json")
         self.assertEqual(len(config.watches), 2)

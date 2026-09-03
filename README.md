@@ -12,7 +12,7 @@ interview slot**. The reference use case shipped in this repo is applying from
 Schengen appointment slots in Dublin are released irregularly and disappear in
 minutes. Open Claw polls the portals you configure, keeps track of what it has
 already seen, and alerts you the moment a *new* slot shows up — on the console,
-in a JSON Lines log file, or to a webhook (Slack, Discord, ntfy, …).
+in a JSON Lines log file, to Telegram, or to a webhook (Slack, Discord, ntfy, …).
 
 ## Features
 
@@ -24,7 +24,7 @@ in a JSON Lines log file, or to a webhook (Slack, Discord, ntfy, …).
   path. A `mock` provider makes demos and tests fully offline.
 - **Alert on every available slot**, de-duplicated so you are notified once per
   slot; if a slot disappears and comes back it alerts again.
-- **Multiple alert sinks** — `console`, `file` (JSON Lines), `webhook`.
+- **Multiple alert sinks** — `console`, `file` (JSON Lines), `telegram`, `webhook`.
 - **Date window filtering** with `earliest` / `latest`.
 - **Persistent state** so restarts do not replay old alerts.
 - **Polite polling** — configurable `poll_interval` plus random `jitter`.
@@ -70,6 +70,35 @@ poll:
 export OPENCLAW_WEBHOOK_URL="https://hooks.example.com/your-hook"
 export OPENCLAW_API_TOKEN="your-token"
 python -m openclaw --config examples/dublin_http.json
+```
+
+### Telegram alerts
+
+`examples/dublin_telegram.json` shows the Dublin watch with Telegram delivery.
+Telegram bot tokens must be supplied from the environment; literal tokens in
+config files are rejected.
+
+1. In Telegram, open **BotFather**, create a bot with `/newbot`, and copy the bot
+   token it returns.
+2. Send any message to your new bot, then obtain the chat id for your user or
+   group using your preferred Telegram client/tooling.
+3. Export the credentials and run Open Claw:
+
+```bash
+export OPENCLAW_TELEGRAM_BOT_TOKEN="paste-your-botfather-token"
+export OPENCLAW_TELEGRAM_CHAT_ID="123456789"
+python -m openclaw --config examples/dublin_telegram.json --once
+```
+
+A rendered Telegram alert looks like:
+
+```text
+2 new Schengen slot(s)
+Centre: Dublin (IE)
+Destination: FR
+Visa category: short-stay
+• 2026-09-14 09:20 — 2 seat(s) — booking link
+• 2026-10-02 11:00 — 1 seat(s) — booking link
 ```
 
 ## CLI
@@ -164,10 +193,15 @@ Exit code `0` on success, `2` for configuration errors.
 | --- | --- | --- |
 | `console` | – | Prints alerts to stdout. |
 | `file` | `path` | Appends one JSON object per alert (JSON Lines). |
+| `telegram` | `bot_token`, `chat_id`, `timeout`, `disable_notification` | Sends compact HTML-formatted Telegram Bot API messages with link previews disabled. |
 | `webhook` | `url`, `headers`, `timeout` | POSTs the alert as JSON. |
 
 Any `${VAR}` in the config is replaced with the environment variable `VAR`, so
 tokens and webhook URLs never need to be committed.
+
+Telegram alerts use the Bot API `sendMessage` endpoint. Messages are split on
+slot boundaries before Telegram's length limit, and every interpolated value is
+HTML-escaped before sending.
 
 
 ### Authenticated portals
@@ -280,6 +314,8 @@ notify tool only.
 Credentials must come from `${ENV_VAR}` placeholders in config. Literal
 password-like secrets are rejected. Open Claw also avoids logging credentials and
 redacts common personal identifiers from booking-link query strings.
+Telegram bot tokens are also required to come from `${ENV_VAR}` placeholders and
+are redacted from Open Claw output, including errors from Telegram request URLs.
 
 Before polling any VFS/TLScontact/BLS (or other) portal, verify that your access
 path and polling behavior comply with that portal's terms plus local law. Keep
