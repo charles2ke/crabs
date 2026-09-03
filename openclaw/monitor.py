@@ -97,11 +97,13 @@ class Monitor:
         """Poll every watch once and dispatch alerts for new slots."""
         alerts: list[Alert] = []
         available_keys: list[str] = []
+        all_watches_succeeded = True
         for watch in self.config.watches:
             try:
                 slots = self.check_watch(watch)
             except ProviderError as exc:
                 LOGGER.warning("watch %s failed: %s", watch.label, exc)
+                all_watches_succeeded = False
                 continue
 
             available_keys.extend(slot.key for slot in slots)
@@ -115,7 +117,8 @@ class Monitor:
             self.state.add_all(slot.key for slot in fresh)
             alerts.append(alert)
 
-        self.state.prune(available_keys)
+        if all_watches_succeeded:
+            self.state.prune(available_keys)
         return alerts
 
     def run_forever(self, max_cycles: int | None = None) -> list[Alert]:

@@ -53,6 +53,17 @@ class MockProviderTests(unittest.TestCase):
         with self.assertRaises(ProviderError):
             MockProvider().fetch(watch)
 
+    def test_bad_seats(self):
+        for seats in ("invalid", None):
+            watch = Watch(
+                "IE",
+                "ES",
+                "Dublin",
+                options={"slots": [{"date": "2026-09-14", "seats": seats}]},
+            )
+            with self.subTest(seats=seats), self.assertRaises(ProviderError):
+                MockProvider().fetch(watch)
+
     def test_no_slots(self):
         self.assertEqual(MockProvider().fetch(Watch("IE", "ES", "Dublin")), [])
 

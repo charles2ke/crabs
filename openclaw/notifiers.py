@@ -128,5 +128,9 @@ def build_notifier(spec: Mapping[str, Any]) -> Notifier:
         url = spec.get("url")
         if not url:
             raise NotifierError("webhook notifier requires a 'url'")
-        return WebhookNotifier(url, spec.get("headers"), float(spec.get("timeout", DEFAULT_TIMEOUT)))
+        try:
+            timeout = float(spec.get("timeout", DEFAULT_TIMEOUT))
+        except (TypeError, ValueError) as exc:
+            raise NotifierError(f"invalid webhook timeout: {exc}") from exc
+        return WebhookNotifier(url, spec.get("headers"), timeout)
     raise NotifierError(f"unknown notifier type {kind!r}")

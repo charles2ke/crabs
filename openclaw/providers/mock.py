@@ -44,13 +44,17 @@ class MockProvider(Provider):
                 slot_date = datetime.strptime(str(entry["date"]), "%Y-%m-%d").date()
             except ValueError as exc:
                 raise ProviderError(f"cannot parse mock slot date: {exc}") from exc
+            try:
+                seats = int(entry.get("seats", 1))
+            except (TypeError, ValueError) as exc:
+                raise ProviderError(f"cannot parse mock slot seats: {exc}") from exc
             slots.append(
                 Slot(
                     watch=watch,
                     slot_date=slot_date,
                     slot_time=entry.get("time"),
                     booking_url=entry.get("url") or options.get("booking_url"),
-                    seats=int(entry.get("seats", 1)),
+                    seats=seats,
                 )
             )
         return slots
