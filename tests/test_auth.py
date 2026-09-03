@@ -225,6 +225,21 @@ class AuthServerTestCase(unittest.TestCase):
         self.assertEqual(self.server.state["login_posts"], 2)
         self.assertEqual(len(self.server.state["seen_authorization"]), 2)
 
+    def test_zero_token_expiry_does_not_relogin_every_fetch(self):
+        self.server.state["mode"] = "token"
+        self.server.state["expires_in"] = 0
+        auth = {
+            "type": "token",
+            "login_url": self.base_url + "/token",
+            "body": {"email": "alice", "password": "secret"},
+            "token_key": "data.token",
+            "expires_key": "expires_in",
+        }
+        provider = HttpJsonProvider()
+        provider.fetch(self._watch(auth))
+        provider.fetch(self._watch(auth))
+        self.assertEqual(self.server.state["login_posts"], 1)
+
     def test_redirect_to_login_raises_authentication_error(self):
         auth = {
             "type": "form",

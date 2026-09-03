@@ -98,34 +98,49 @@ class HttpJsonProvider(Provider):
         self, watch: Watch, url: str, headers: dict[str, str], auth: dict[str, Any]
     ) -> Any:
         session = self._session_for(watch, auth)
-        force_reauth = False
-        for attempt in range(2):
-            try:
-                session.ensure_authenticated(force=force_reauth)
-                status, raw = session.request(
-                    url,
-                    headers={"Accept": "application/json", **headers},
-                    expect_json=True,
-                )
-            except AuthenticationError as exc:
-                if attempt == 0:
-                    force_reauth = True
-                    continue
-                raise AuthenticationError(
-                    f"session expired and re-login failed for watch {watch.label!r}"
-                ) from exc
+        try:
+            status, raw = self._authenticated_request(session, url, headers, force=False)
+        except AuthenticationError as exc:
+            return self._retry_after_auth_failure(watch, session, url, headers, exc)
 
-            if status in (401, 403):
-                if attempt == 0:
-                    force_reauth = True
-                    continue
-                raise AuthenticationError(
-                    f"session expired and re-login failed for watch {watch.label!r}: HTTP {status}"
-                )
-            if status >= 400:
-                raise ProviderError(f"request to {redact_url(url)!r} failed: HTTP {status}")
-            return self._decode_json(url, raw)
-        raise ProviderError("authenticated request retry loop exited unexpectedly")
+        if status in (401, 403):
+            return self._retry_after_auth_failure(watch, session, url, headers, None)
+        if status >= 400:
+            raise ProviderError(f"request to {redact_url(url)!r} failed: HTTP {status}")
+        return self._decode_json(url, raw)
+
+    def _authenticated_request(
+        self, session: Session, url: str, headers: dict[str, str], *, force: bool
+    ) -> tuple[int, bytes]:
+        session.ensure_authenticated(force=force)
+        return session.request(
+            url,
+            headers={"Accept": "application/json", **headers},
+            expect_json=True,
+        )
+
+    def _retry_after_auth_failure(
+        self,
+        watch: Watch,
+        session: Session,
+        url: str,
+        headers: dict[str, str],
+        original: AuthenticationError | None,
+    ) -> Any:
+        try:
+            status, raw = self._authenticated_request(session, url, headers, force=True)
+        except AuthenticationError as exc:
+            raise AuthenticationError(
+                f"session expired and re-login failed for watch {watch.label!r}"
+            ) from (original or exc)
+
+        if status in (401, 403):
+            raise AuthenticationError(
+                f"session expired and re-login failed for watch {watch.label!r}: HTTP {status}"
+            ) from original
+        if status >= 400:
+            raise ProviderError(f"request to {redact_url(url)!r} failed: HTTP {status}")
+        return self._decode_json(url, raw)
 
     @staticmethod
     def _decode_json(url: str, raw: bytes) -> Any:

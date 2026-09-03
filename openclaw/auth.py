@@ -192,7 +192,7 @@ class Session:
             return
         # Clear stale cookies, token headers, and expiry data before any forced
         # re-authentication or proactive refresh of an already-authenticated session.
-        if force or self._authenticated:
+        if force or self._authenticated or self.token_expired():
             self.cookie_jar.clear()
             self._auth_header = None
             self._token_expiry = None
@@ -296,4 +296,5 @@ class Session:
                 raise AuthenticationError(
                     f"login to {redact_url(login_url)!r} failed: invalid {expires_key!r} expiry"
                 ) from exc
-            self._token_expiry = self.clock() + max(0.0, expires_in)
+            if expires_in > 0:
+                self._token_expiry = self.clock() + expires_in
