@@ -251,13 +251,13 @@ class TelegramNotifier(Notifier):
         retry_after = self._retry_after(response)
         if (
             allow_retry
+            and status == 429
             and retry_after is not None
             and 0 <= retry_after <= MAX_TELEGRAM_RETRY_AFTER
         ):
-            if status == 429 or response.get("ok") is not True:
-                self.sleeper(retry_after)
-                self._post(payload, allow_retry=False)
-                return
+            self.sleeper(retry_after)
+            self._post(payload, allow_retry=False)
+            return
 
         description = str(response.get("description") or "Telegram API error")
         raise NotifierError(
