@@ -178,7 +178,7 @@ class TelegramNotifier(Notifier):
                 continue
             if not current_lines:
                 raise NotifierError(
-                    "telegram initial slot line exceeds Telegram length limit"
+                    "single slot line exceeds the Telegram message length limit"
                 )
 
             chunks.append(current_lines)
@@ -186,7 +186,7 @@ class TelegramNotifier(Notifier):
             header = self._format_header(alert, 1, continuation=True)
             if len("\n".join([header, line])) > self.message_limit:
                 raise NotifierError(
-                    "telegram continuation slot line exceeds Telegram length limit"
+                    "continuation slot line exceeds the Telegram message length limit"
                 )
         chunks.append(current_lines)
         return [
