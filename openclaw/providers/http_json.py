@@ -125,7 +125,6 @@ class HttpJsonProvider(Provider):
             if status >= 400:
                 raise ProviderError(f"request to {redact_url(url)!r} failed: HTTP {status}")
             return self._decode_json(url, raw)
-        raise AuthenticationError(f"session expired and re-login failed for watch {watch.label!r}")
 
     @staticmethod
     def _decode_json(url: str, raw: bytes) -> Any:

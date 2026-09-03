@@ -106,7 +106,8 @@ def _validate_auth(auth: Any) -> None:
             if not isinstance(success_status, list) or not success_status:
                 raise ConfigError("form auth 'success_status' must be a non-empty list")
             try:
-                [int(code) for code in success_status]
+                for code in success_status:
+                    int(code)
             except (TypeError, ValueError) as exc:
                 raise ConfigError("form auth 'success_status' values must be integers") from exc
         csrf = auth.get("csrf")
