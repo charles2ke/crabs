@@ -137,6 +137,8 @@ def parse_config(data: Mapping[str, Any]) -> Config:
         raise ConfigError("configuration needs a non-empty 'watches' list")
     for entry in raw_watches:
         if isinstance(entry, Mapping) and isinstance(entry.get("options", {}), Mapping):
+            # Auth secret validation must inspect raw placeholders before they
+            # are expanded to their environment values.
             _validate_auth(entry.get("options", {}).get("auth"))
 
     data = _expand_env(raw_data)

@@ -190,7 +190,7 @@ class Session:
             return
         if not force and self._authenticated and not self.token_expired():
             return
-        if force:
+        if force or self._authenticated:
             self.cookie_jar.clear()
             self._auth_header = None
             self._token_expiry = None
@@ -243,6 +243,9 @@ class Session:
             body = urllib.parse.urlencode(fields).encode("utf-8")
             headers["Content-Type"] = "application/x-www-form-urlencoded"
 
+        # Do not follow form-login redirects here: portals often use 302 as the
+        # successful login response, and ``request`` reports that redirect status
+        # so it can be checked against ``success_status`` below.
         status, _ = self.request(
             login_url, headers=headers, method="POST", body=body, follow_redirects=False
         )
