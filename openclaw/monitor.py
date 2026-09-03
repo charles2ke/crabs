@@ -324,7 +324,10 @@ class Monitor:
 
     def _health_records(self) -> dict[str, dict[str, Any]]:
         records = self.state.meta.setdefault("health", {})
-        return records if isinstance(records, dict) else {}
+        if not isinstance(records, dict):
+            records = {}
+            self.state.meta["health"] = records
+        return records
 
     def _record_health(
         self,
@@ -397,7 +400,10 @@ class Monitor:
 
     def _current_records(self) -> dict[str, list[dict[str, Any]]]:
         records = self.state.meta.setdefault("current_slots", {})
-        return records if isinstance(records, dict) else {}
+        if not isinstance(records, dict):
+            records = {}
+            self.state.meta["current_slots"] = records
+        return records
 
     def _previous_slots(self, watch: Watch) -> list[Slot]:
         slots: list[Slot] = []
@@ -523,7 +529,10 @@ class Monitor:
 
     def _pending(self) -> list[dict[str, Any]]:
         pending = self.state.meta.setdefault("pending_alerts", [])
-        return pending if isinstance(pending, list) else []
+        if not isinstance(pending, list):
+            pending = []
+            self.state.meta["pending_alerts"] = pending
+        return pending
 
     def _deliver_or_hold(self, alert: Alert, delivered: list[Alert]) -> None:
         now = self.clock()
