@@ -26,25 +26,38 @@ class SeenStore:
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path
-        self._seen: set[str] = set()
+        self._seen: dict[str, str | None] = {}
         if path and path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 if isinstance(data, list):
-                    self._seen = {str(item) for item in data}
+                    self._seen = {str(item): None for item in data}
+                elif isinstance(data, dict):
+                    self._seen = {
+                        str(key): str(value) if value is not None else None
+                        for key, value in data.items()
+                    }
             except (OSError, json.JSONDecodeError):
                 LOGGER.warning("ignoring unreadable state file %s", path)
 
     def __contains__(self, key: str) -> bool:
         return key in self._seen
 
-    def add_all(self, keys: Iterable[str]) -> None:
-        self._seen.update(keys)
+    def add_all(self, keys: Iterable[str], watch_label: str | None = None) -> None:
+        self._seen.update((key, watch_label) for key in keys)
         self.save()
 
-    def prune(self, valid_keys: Iterable[str]) -> None:
+    def prune(
+        self, valid_keys: Iterable[str], failed_watch_labels: Iterable[str] = ()
+    ) -> None:
         """Drop keys that are no longer offered so they can alert again later."""
-        self._seen &= set(valid_keys)
+        valid = set(valid_keys)
+        failed = set(failed_watch_labels)
+        self._seen = {
+            key: watch_label
+            for key, watch_label in self._seen.items()
+            if key in valid or (failed and (watch_label is None or watch_label in failed))
+        }
         self.save()
 
     def save(self) -> None:
@@ -52,7 +65,7 @@ class SeenStore:
             return
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps(sorted(self._seen)), encoding="utf-8")
+            self.path.write_text(json.dumps(dict(sorted(self._seen.items()))), encoding="utf-8")
         except OSError:
             LOGGER.warning("cannot persist state file %s", self.path)
 
@@ -97,13 +110,13 @@ class Monitor:
         """Poll every watch once and dispatch alerts for new slots."""
         alerts: list[Alert] = []
         available_keys: list[str] = []
-        all_watches_succeeded = True
+        failed_watch_labels: list[str] = []
         for watch in self.config.watches:
             try:
                 slots = self.check_watch(watch)
             except ProviderError as exc:
                 LOGGER.warning("watch %s failed: %s", watch.label, exc)
-                all_watches_succeeded = False
+                failed_watch_labels.append(watch.label)
                 continue
 
             available_keys.extend(slot.key for slot in slots)
@@ -114,11 +127,10 @@ class Monitor:
 
             alert = Alert(watch=watch, slots=tuple(fresh), created_at=self.clock())
             self._dispatch(alert)
-            self.state.add_all(slot.key for slot in fresh)
+            self.state.add_all((slot.key for slot in fresh), watch.label)
             alerts.append(alert)
 
-        if all_watches_succeeded:
-            self.state.prune(available_keys)
+        self.state.prune(available_keys, failed_watch_labels)
         return alerts
 
     def run_forever(self, max_cycles: int | None = None) -> list[Alert]:

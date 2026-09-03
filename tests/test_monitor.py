@@ -111,24 +111,47 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(alerts[0].watch.country_to, "ES")
 
     def test_provider_error_does_not_prune_seen_slots(self):
-        config = make_config([{"date": "2026-09-14"}])
-        monitor = Monitor(config, notifiers=[], sleeper=lambda _: None)
-        self.assertEqual(len(monitor.run_once()), 1)
-
-        monitor.config = make_config([], watches=[
+        config = parse_config(
             {
-                "country_from": "IE",
-                "country_to": "FR",
-                "city": "Dublin",
-                "provider": "mock",
-                "options": {"file": "/no/such/file.json"},
+                "watches": [
+                    {
+                        "country_from": "IE",
+                        "country_to": country,
+                        "city": "Dublin",
+                        "options": {"slots": [{"date": "2026-09-14"}]},
+                    }
+                    for country in ("FR", "ES")
+                ]
             }
-        ])
+        )
+        monitor = Monitor(config, notifiers=[], sleeper=lambda _: None)
+        self.assertEqual(len(monitor.run_once()), 2)
+
+        monitor.config = parse_config(
+            {
+                "watches": [
+                    {
+                        "country_from": "IE",
+                        "country_to": "FR",
+                        "city": "Dublin",
+                        "options": {"file": "/no/such/file.json"},
+                    },
+                    {
+                        "country_from": "IE",
+                        "country_to": "ES",
+                        "city": "Dublin",
+                        "options": {"slots": []},
+                    },
+                ]
+            }
+        )
         with self.assertLogs("openclaw", level="WARNING"):
             monitor.run_once()
 
         monitor.config = config
-        self.assertEqual(monitor.run_once(), [])
+        alerts = monitor.run_once()
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0].watch.country_to, "ES")
 
     def test_notifier_failure_is_logged(self):
         class Broken(ConsoleNotifier):
