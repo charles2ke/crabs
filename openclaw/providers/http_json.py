@@ -125,6 +125,7 @@ class HttpJsonProvider(Provider):
             if status >= 400:
                 raise ProviderError(f"request to {redact_url(url)!r} failed: HTTP {status}")
             return self._decode_json(url, raw)
+        raise ProviderError("authenticated request retry loop exited unexpectedly")
 
     @staticmethod
     def _decode_json(url: str, raw: bytes) -> Any:
