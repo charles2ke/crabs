@@ -1,0 +1,55 @@
+{
+  "metadata": {
+    "name": "Dublin Schengen slot watch (TLScontact template)",
+    "notes": "Template only: configure only endpoints you are allowed to access and comply with portal terms and local law."
+  },
+  "poll_interval": 900,
+  "jitter": 180,
+  "earliest": "2026-09-01",
+  "latest": "2027-03-31",
+  "state_file": ".openclaw/dublin-tls-state.json",
+  "notifiers": [
+    { "type": "console" }
+  ],
+  "watches": [
+    {
+      "country_from": "IE",
+      "country_to": "ES",
+      "city": "Dublin",
+      "visa_category": "short-stay",
+      "provider": "tlscontact",
+      "options": {
+        "base_url": "https://tls.example.invalid",
+        "availability_path": "/api/calendar/availability",
+        "location_code": "DUBLIN",
+        "category_code": "SCHENGEN_SHORT_STAY",
+        "sub_category_code": "TOURISM",
+        "destination_code": "ESP",
+        "booking_path": "/booking/calendar",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "response": {
+          "items_path": "calendar.days",
+          "date_key": "date",
+          "date_format": "%Y-%m-%d",
+          "available_key": "available",
+          "sessions_key": "sessions",
+          "time_key": "time",
+          "seats_key": "count",
+          "booking_url_key": "bookingUrl"
+        },
+        "auth": {
+          "type": "form",
+          "login_url": "https://tls.example.invalid/account/login",
+          "fields": {
+            "email": "${OPENCLAW_TLS_USER}",
+            "password": "${OPENCLAW_TLS_PASS}"
+          },
+          "encoding": "form",
+          "success_status": [200, 302]
+        }
+      }
+    }
+  ]
+}

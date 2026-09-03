@@ -1,0 +1,48 @@
+{
+  "metadata": {
+    "name": "Dublin Schengen slot watch (BLS International template)",
+    "notes": "Template only: configure only endpoints you are allowed to access and comply with portal terms and local law."
+  },
+  "poll_interval": 900,
+  "jitter": 180,
+  "earliest": "2026-09-01",
+  "latest": "2027-03-31",
+  "state_file": ".openclaw/dublin-bls-state.json",
+  "notifiers": [
+    { "type": "console" }
+  ],
+  "watches": [
+    {
+      "country_from": "IE",
+      "country_to": "PT",
+      "city": "Dublin",
+      "visa_category": "short-stay",
+      "provider": "bls-international",
+      "options": {
+        "base_url": "https://bls.example.invalid",
+        "availability_path": "/api/appointments/slots",
+        "centre_code": "DUBLIN",
+        "category_code": "SCHENGEN_SHORT_STAY",
+        "sub_category_code": "TOURISM",
+        "mission_code": "PRT",
+        "booking_path": "/booking/appointment",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "response": {
+          "items_path": "availability",
+          "date_key": "appointmentDate",
+          "date_format": "%Y-%m-%d",
+          "time_key": "appointmentTime",
+          "seats_key": "available",
+          "booking_url_key": "bookingUrl"
+        },
+        "auth": {
+          "type": "basic",
+          "username": "${OPENCLAW_BLS_USER}",
+          "password": "${OPENCLAW_BLS_PASS}"
+        }
+      }
+    }
+  ]
+}
