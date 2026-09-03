@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from openclaw.cli import main
+from openclaw.cli import EXIT_ALERTS, main
 from openclaw.config import parse_config
 from openclaw.models import Alert, Slot, Watch
 from openclaw.monitor import Monitor, SeenStore, in_window
@@ -270,7 +270,7 @@ class CliTests(unittest.TestCase):
             path = Path(tmp) / "dublin.json"
             path.write_text(json.dumps(config), encoding="utf-8")
 
-            self.assertEqual(main(["--config", str(path), "--once"]), 0)
+            self.assertEqual(main(["--config", str(path), "--once"]), EXIT_ALERTS)
             lines = (Path(tmp) / "alerts.jsonl").read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(lines), 2)
 

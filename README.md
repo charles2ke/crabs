@@ -26,7 +26,9 @@ in a JSON Lines log file, to Telegram, or to a webhook (Slack, Discord, ntfy, �
   slot; if a slot disappears and comes back it alerts again.
 - **Multiple alert sinks** — `console`, `file` (JSON Lines), `telegram`, `webhook`.
 - **Date window filtering** with `earliest` / `latest`.
-- **Persistent state** so restarts do not replay old alerts.
+- **Persistent state** so restarts do not replay old alerts — with atomic
+  writes, cross-process locking and past-date pruning, so `--once` is safe to
+  run from cron, a systemd timer or GitHub Actions.
 - **Polite polling** — configurable `poll_interval` plus random `jitter`.
 - **Secrets stay out of config files** — `${ENV_VAR}` placeholders are expanded
   from the environment.
@@ -104,7 +106,8 @@ Visa category: short-stay
 ## CLI
 
 ```text
-python -m openclaw --config CONFIG [--once] [--cycles N] [--list-watches] [--verbose]
+python -m openclaw --config CONFIG [--once] [--cycles N] [--list-watches]
+                   [--state PATH] [--bootstrap] [--lock-timeout SECONDS] [--verbose]
 ```
 
 | Flag | Meaning |
@@ -113,9 +116,156 @@ python -m openclaw --config CONFIG [--once] [--cycles N] [--list-watches] [--ver
 | `--once` | Run a single polling cycle and exit. |
 | `--cycles N` | Stop after N cycles (default: run until interrupted). |
 | `--list-watches` | Print the configured watches and exit. |
+| `--state PATH` | Seen-slot state file; overrides `state_file` in the config. |
+| `--bootstrap` | On a cold state store, record the slots currently on offer as already seen and do **not** alert. Use it for the very first scheduled run so you are not paged about the whole existing backlog. Once the state file exists the flag is a no-op. |
+| `--lock-timeout SECONDS` | How long to wait for the state lock held by another run (default `0`, i.e. give up immediately). |
 | `--verbose`, `-v` | Debug logging. |
 
-Exit code `0` on success, `2` for configuration errors.
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Ran fine, no new slots (also used for `--list-watches` and Ctrl-C). |
+| `2` | Configuration error (bad config, unusable notifier/provider setup). |
+| `3` | Ran fine, but at least one watch failed because its provider was unavailable, and nothing was alerted. Transient — safe to retry on the next schedule. |
+| `4` | Another Open Claw run holds the state lock; this run did nothing. |
+| `10` | Ran fine and alerted about at least one new slot. |
+
+`10` wins over `3`: if any alert was dispatched the run reports `10` even when a
+different watch failed.
+
+## Running on a schedule
+
+Open Claw does not need a long-lived process. `--once` plus a scheduler is the
+recommended deployment: state is persisted between runs, writes are atomic
+(temp file + `os.replace`), a lock file next to the state file (`<state>.lock`)
+keeps overlapping runs from racing, and entries for appointment dates in the
+past are pruned so the state file cannot grow without bound.
+
+### GitHub Actions
+
+`.github/workflows/watch.yml` runs `python -m openclaw --config … --once` every
+30 minutes and on `workflow_dispatch` (which also accepts a `config` path and a
+`bootstrap` toggle).
+
+1. Add the credentials your config references as **repository secrets**, e.g.
+   `OPENCLAW_TELEGRAM_BOT_TOKEN`, `OPENCLAW_TELEGRAM_CHAT_ID`, and any provider
+   credentials (`OPENCLAW_USER`, `OPENCLAW_PASS`, `OPENCLAW_API_TOKEN`,
+   `OPENCLAW_WEBHOOK_URL`). The workflow exposes them as environment variables;
+   configs reference them with `${ENV_VAR}` placeholders, never literals.
+2. Point `OPENCLAW_CONFIG` (or the `workflow_dispatch` input) at your config.
+3. Change the interval by editing the `schedule.cron` expression. Keep it
+   polite; GitHub also runs `schedule` triggers late under load and disables
+   them on repositories with no activity for 60 days.
+
+Cache behaviour and tradeoffs:
+
+- State lives in `.openclaw/` and is carried between runs with
+  `actions/cache/restore` + `actions/cache/save`, using a unique key per run
+  (`openclaw-state-<run_id>`) and the `openclaw-state-` restore prefix, so every
+  run restores the newest state and always saves an updated copy.
+- Actions caches are evicted after 7 days of no use and under repository size
+  pressure, and they are branch-scoped. A cold cache therefore happens
+  occasionally — the workflow passes `--bootstrap` whenever no cache was
+  matched, so a cold run records what is currently on offer instead of alerting
+  about all of it. The cost is that slots which appear *during* a cold run are
+  only reported on the next run.
+- The `concurrency: openclaw-watch` group serialises runs; `--lock-timeout 30`
+  is a second line of defence for self-hosted runners sharing a state file.
+- Provider outages exit `3` and are surfaced as a workflow *warning*, not a
+  failure, so transient portal errors do not produce a wall of red CI.
+- **Public repositories publish Actions logs.** Anything the run prints —
+  centres, dates, booking links — is world-readable. Keep configs free of
+  personal data, keep every credential in secrets, and use a private repository
+  if in doubt.
+
+### System crontab (VPS, Raspberry Pi, …)
+
+Use absolute paths, an explicit `--state` path outside the checkout, and
+redirect logs. `--bootstrap` is safe to leave in place permanently: it only
+takes effect when the state file is missing.
+
+```cron
+# m h dom mon dow  command
+*/20 * * * * /opt/openclaw/.venv/bin/openclaw \
+  --config /etc/openclaw/dublin.json \
+  --state /var/lib/openclaw/state.json \
+  --once --bootstrap >> /var/log/openclaw.log 2>&1
+```
+
+Cron gives a bare environment, so export secrets in the crontab or source them
+from a root-only file:
+
+```cron
+OPENCLAW_TELEGRAM_BOT_TOKEN=paste-your-botfather-token
+OPENCLAW_TELEGRAM_CHAT_ID=123456789
+```
+
+Keep that file `chmod 600`. Overlapping runs are already safe (the second run
+exits `4` immediately), so no `flock` wrapper is needed.
+
+### systemd timer
+
+`/etc/systemd/system/openclaw.service`:
+
+```ini
+[Unit]
+Description=Open Claw Schengen slot watcher (single poll)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+StateDirectory=openclaw
+EnvironmentFile=/etc/openclaw/secrets.env
+ExecStart=/opt/openclaw/.venv/bin/openclaw \
+  --config /etc/openclaw/dublin.json \
+  --state /var/lib/openclaw/state.json --once --bootstrap
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallFilter=@system-service
+```
+
+`/etc/systemd/system/openclaw.timer`:
+
+```ini
+[Unit]
+Description=Run Open Claw every 20 minutes
+
+[Timer]
+OnCalendar=*:0/20
+RandomizedDelaySec=300
+Persistent=true
+Unit=openclaw.service
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo systemctl enable --now openclaw.timer
+systemctl list-timers openclaw.timer
+journalctl -u openclaw.service -f
+```
+
+`RandomizedDelaySec` spreads requests so every Open Claw deployment does not hit
+a portal on the same minute; `Persistent=true` catches up a missed run after a
+reboot. `EnvironmentFile` should be `chmod 600` and hold the `${ENV_VAR}` values
+the config expects. With `DynamicUser=yes`, prefer the systemd-managed
+`StateDirectory` path (`/var/lib/openclaw`) for `--state`.
+
+### Choosing an interval
+
+Poll no more often than you need: 20–30 minutes is plenty for consulate
+calendars, matches the `poll_interval` guidance below (10 minutes or more), and
+keeps you well inside portal rate limits. Add jitter — `RandomizedDelaySec` for
+systemd, a random minute offset for cron, the `jitter` config key for long-lived
+runs. If a portal returns errors or asks you to stop, back off or stop entirely.
 
 ## Configuration reference
 
@@ -299,7 +449,8 @@ python -m unittest discover -s tests -v
 ```
 
 The test suite is offline and covers config validation, providers/adapters,
-de-duplication, date windows, notifiers and the CLI.
+de-duplication, date windows, notifiers, scheduled-run behaviour (bootstrap,
+locking, atomic state writes, pruning, exit codes) and the CLI.
 
 ## Responsible use
 

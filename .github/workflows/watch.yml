@@ -1,0 +1,91 @@
+name: watch
+
+# Scheduled Open Claw run: poll the configured portals once and alert on new
+# slots. See "Running on a schedule" in the README.
+#
+# NOTE: on a public repository the logs of this workflow are world-readable.
+# Keep the config free of anything sensitive (credentials belong in
+# repository secrets, referenced from the config as ${ENV_VAR} placeholders).
+
+on:
+  schedule:
+    # Every 30 minutes — a polite interval consistent with the project's
+    # responsible-use guidance. Adjust with care and honour portal rate limits.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      config:
+        description: Path to the Open Claw config file
+        default: examples/dublin.json
+        required: false
+      bootstrap:
+        description: Record current slots without alerting (first run)
+        type: boolean
+        default: false
+        required: false
+
+permissions:
+  contents: read
+
+# Only one scheduled run at a time: overlapping runs would race on the state
+# file. Queue instead of cancelling so an in-flight poll finishes cleanly.
+concurrency:
+  group: openclaw-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      OPENCLAW_CONFIG: ${{ inputs.config || 'examples/dublin.json' }}
+      OPENCLAW_STATE: .openclaw/state.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Carry the seen-slot state forward between scheduled runs so the same
+      # slot is not re-alerted every 30 minutes. A unique key per run plus a
+      # shared restore prefix gives "restore latest, always save".
+      - name: Restore seen-slot state
+        id: state
+        uses: actions/cache/restore@v4
+        with:
+          path: .openclaw
+          key: openclaw-state-${{ github.run_id }}
+          restore-keys: |
+            openclaw-state-
+
+      - name: Poll for slots
+        env:
+          OPENCLAW_TELEGRAM_BOT_TOKEN: ${{ secrets.OPENCLAW_TELEGRAM_BOT_TOKEN }}
+          OPENCLAW_TELEGRAM_CHAT_ID: ${{ secrets.OPENCLAW_TELEGRAM_CHAT_ID }}
+          OPENCLAW_USER: ${{ secrets.OPENCLAW_USER }}
+          OPENCLAW_PASS: ${{ secrets.OPENCLAW_PASS }}
+          OPENCLAW_API_TOKEN: ${{ secrets.OPENCLAW_API_TOKEN }}
+          OPENCLAW_WEBHOOK_URL: ${{ secrets.OPENCLAW_WEBHOOK_URL }}
+          # Cold cache (or an explicit manual request) => bootstrap instead of
+          # dumping every currently open slot at the operator.
+          BOOTSTRAP: ${{ (steps.state.outputs.cache-matched-key == '' || inputs.bootstrap) && '--bootstrap' || '' }}
+        run: |
+          set -uo pipefail
+          python -m openclaw --config "$OPENCLAW_CONFIG" --once \
+            --state "$OPENCLAW_STATE" --lock-timeout 30 $BOOTSTRAP
+          code=$?
+          case "$code" in
+            0)  echo "::notice::no new slots" ;;
+            10) echo "::notice::new slots found and alerts dispatched" ;;
+            3)  echo "::warning::a provider was unavailable; will retry next run" ;;
+            4)  echo "::warning::another run holds the state lock; skipped" ;;
+            *)  echo "::error::openclaw failed with exit code $code"; exit "$code" ;;
+          esac
+
+      - name: Save seen-slot state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .openclaw
+          key: openclaw-state-${{ github.run_id }}

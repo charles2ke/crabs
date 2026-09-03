@@ -1,6 +1,7 @@
 """Open Claw: watch Schengen visa appointment slots and alert on availability."""
 
 from .config import Config, ConfigError, load_config, parse_config
+from .locking import FileLock, LockError
 from .models import Alert, Slot, Watch
 from .monitor import Monitor, SeenStore
 from .notifiers import ConsoleNotifier, FileNotifier, Notifier, NotifierError, WebhookNotifier
@@ -14,7 +15,9 @@ __all__ = [
     "Config",
     "ConfigError",
     "ConsoleNotifier",
+    "FileLock",
     "FileNotifier",
+    "LockError",
     "Monitor",
     "Notifier",
     "NotifierError",
