@@ -84,7 +84,7 @@ class FileLock:
     def _try_acquire(self) -> bool:
         if fcntl is None and msvcrt is None:  # pragma: no cover - fallback
             try:
-                self._handle = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                self._handle = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
             except FileExistsError:
                 return False
             return True
