@@ -1,0 +1,18 @@
+name: Feature request
+description: Suggest an observe-and-notify improvement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and proposed behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Safety constraints
+      options:
+        - label: This does not automate booking or bypass portal controls.
+          required: true
