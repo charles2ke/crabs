@@ -37,6 +37,9 @@ class PortalHandler(BaseHTTPRequestHandler):
         if self.path == "/html":
             self._send(200, b"<html><body>login</body></html>")
             return
+        if self.path == "/after-login":
+            self._send(200, b"after")
+            return
         if self.path == "/slots":
             self.state["slot_requests"] = self.state.get("slot_requests", 0) + 1
             auth = self.headers.get("Authorization")
@@ -76,6 +79,11 @@ class PortalHandler(BaseHTTPRequestHandler):
                 "fail_after_login_posts", 999999
             ):
                 self._send(401)
+            elif self.state.get("login_redirects"):
+                self._send(
+                    302,
+                    headers={"Location": "/after-login", "Set-Cookie": "session=ok; Path=/"},
+                )
             else:
                 self._send(200, b"ok", {"Set-Cookie": "session=ok; Path=/"})
             return
@@ -141,6 +149,18 @@ class AuthServerTestCase(unittest.TestCase):
         HttpJsonProvider().fetch(self._watch(auth))
         posted = parse_qs(self.server.state["last_login_body"])
         self.assertEqual(posted["_csrf"], ["csrf123"])
+
+    def test_form_login_accepts_configured_302_success(self):
+        self.server.state["login_redirects"] = True
+        auth = {
+            "type": "form",
+            "login_url": self.base_url + "/login",
+            "fields": {"username": "alice", "password": "secret"},
+            "success_status": [302],
+        }
+        slots = HttpJsonProvider().fetch(self._watch(auth))
+        self.assertEqual(len(slots), 1)
+        self.assertEqual(self.server.state["login_posts"], 1)
 
     def test_token_login_injects_authorization_header_and_dotted_key(self):
         self.server.state["mode"] = "token"

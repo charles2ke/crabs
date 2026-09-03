@@ -1,0 +1,47 @@
+{
+  "metadata": {
+    "name": "Dublin Schengen slot watch (authenticated form-login template)",
+    "notes": "Template only: replace example.invalid URLs with a portal you are entitled to access, and check its terms before automated login or polling."
+  },
+  "poll_interval": 900,
+  "jitter": 180,
+  "earliest": "2026-09-01",
+  "latest": "2027-03-31",
+  "state_file": ".openclaw/dublin-auth-state.json",
+  "notifiers": [
+    { "type": "console" }
+  ],
+  "watches": [
+    {
+      "country_from": "IE",
+      "country_to": "FR",
+      "city": "Dublin",
+      "visa_category": "short-stay",
+      "provider": "http-json",
+      "options": {
+        "url": "https://portal.example.invalid/api/centres/dublin-fr/availability",
+        "items_key": "dates",
+        "date_key": "date",
+        "date_format": "%Y-%m-%d",
+        "time_key": "time",
+        "seats_key": "available",
+        "booking_url": "https://portal.example.invalid/book/dublin-fr",
+        "auth": {
+          "type": "form",
+          "login_url": "https://portal.example.invalid/login",
+          "fields": {
+            "username": "${OPENCLAW_USER}",
+            "password": "${OPENCLAW_PASS}"
+          },
+          "encoding": "form",
+          "csrf": {
+            "url": "https://portal.example.invalid/login",
+            "regex": "name=\"_csrf\" value=\"([^\"]+)\"",
+            "field": "_csrf"
+          },
+          "success_status": [200, 302]
+        }
+      }
+    }
+  ]
+}

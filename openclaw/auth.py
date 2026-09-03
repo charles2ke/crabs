@@ -91,6 +91,7 @@ class _AuthRedirectHandler(urllib.request.HTTPRedirectHandler):
         super().__init__()
         self.login_url = login_url
         self.expect_json = False
+        self.follow_redirects = True
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
         redacted_new = redact_url(newurl)
@@ -103,6 +104,8 @@ class _AuthRedirectHandler(urllib.request.HTTPRedirectHandler):
                 f"authentication required: JSON request to {redact_url(req.full_url)!r} "
                 f"redirected to {redacted_new!r}"
             )
+        if not self.follow_redirects:
+            raise urllib.error.HTTPError(req.full_url, code, msg, headers, fp)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -150,6 +153,7 @@ class Session:
         method: str = "GET",
         body: bytes | None = None,
         expect_json: bool = False,
+        follow_redirects: bool = True,
     ) -> tuple[int, bytes]:
         """Perform one HTTP request and return ``(status, body)``."""
         _validate_http_url(url)
@@ -160,6 +164,7 @@ class Session:
             url, data=body, headers=request_headers, method=method.upper()
         )
         self._redirect_handler.expect_json = expect_json
+        self._redirect_handler.follow_redirects = follow_redirects
         try:
             with self.opener.open(  # noqa: S310 - scheme validated above
                 request, timeout=self.timeout
@@ -175,6 +180,7 @@ class Session:
             raise ProviderError(f"request to {redact_url(url)!r} failed: {exc}") from exc
         finally:
             self._redirect_handler.expect_json = False
+            self._redirect_handler.follow_redirects = True
 
         if len(raw) > MAX_RESPONSE_BYTES:
             raise ProviderError(f"response from {redact_url(url)!r} is too large")
@@ -239,7 +245,9 @@ class Session:
             body = urllib.parse.urlencode(fields).encode("utf-8")
             headers["Content-Type"] = "application/x-www-form-urlencoded"
 
-        status, _ = self.request(login_url, headers=headers, method="POST", body=body)
+        status, _ = self.request(
+            login_url, headers=headers, method="POST", body=body, follow_redirects=False
+        )
         success_status = {int(code) for code in self.auth.get("success_status", [200, 302])}
         if status not in success_status:
             raise AuthenticationError(

@@ -85,6 +85,11 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(len(config.watches), 2)
         self.assertTrue(all(watch.city == "Dublin" for watch in config.watches))
 
+    def test_load_dublin_auth_example(self):
+        config = load_config(Path(__file__).resolve().parents[1] / "examples" / "dublin_auth.json")
+        self.assertEqual(len(config.watches), 1)
+        self.assertEqual(config.watches[0].options["auth"]["type"], "form")
+
     def test_load_invalid_json(self):
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "bad.json"
