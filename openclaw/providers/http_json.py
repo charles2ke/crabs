@@ -98,10 +98,10 @@ class HttpJsonProvider(Provider):
         self, watch: Watch, url: str, headers: dict[str, str], auth: dict[str, Any]
     ) -> Any:
         session = self._session_for(watch, auth)
-        relogin = False
+        force_reauth = False
         for attempt in range(2):
             try:
-                session.ensure_authenticated(force=relogin)
+                session.ensure_authenticated(force=force_reauth)
                 status, raw = session.request(
                     url,
                     headers={"Accept": "application/json", **headers},
@@ -109,7 +109,7 @@ class HttpJsonProvider(Provider):
                 )
             except AuthenticationError as exc:
                 if attempt == 0:
-                    relogin = True
+                    force_reauth = True
                     continue
                 raise AuthenticationError(
                     f"session expired and re-login failed for watch {watch.label!r}"
@@ -117,7 +117,7 @@ class HttpJsonProvider(Provider):
 
             if status in (401, 403):
                 if attempt == 0:
-                    relogin = True
+                    force_reauth = True
                     continue
                 raise AuthenticationError(
                     f"session expired and re-login failed for watch {watch.label!r}: HTTP {status}"

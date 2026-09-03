@@ -190,6 +190,8 @@ class Session:
             return
         if not force and self._authenticated and not self.token_expired():
             return
+        # Clear stale cookies, token headers, and expiry data before any forced
+        # re-authentication or proactive refresh of an already-authenticated session.
         if force or self._authenticated:
             self.cookie_jar.clear()
             self._auth_header = None
