@@ -48,7 +48,7 @@ variables.
   "token_key": "access_token",
   "expires_key": "expires_in",
   "header": "Authorization",
-  "header_format": "******"
+  "header_format": "Bearer {token}"
 }
 ```
 
