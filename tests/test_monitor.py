@@ -220,9 +220,23 @@ class NotifierTests(unittest.TestCase):
         self.assertEqual(
             build_notifier({"type": "webhook", "url": "https://hook.invalid"}).name, "webhook"
         )
+        self.assertEqual(
+            build_notifier(
+                {"type": "telegram", "bot_token": "unit-test-token", "chat_id": "987654"}
+            ).name,
+            "telegram",
+        )
 
     def test_build_notifier_validation(self):
-        for spec in ({"type": "nope"}, {"type": "file"}, {"type": "webhook"}, {"type": "webhook", "url": "ftp://x"}):
+        for spec in (
+            {"type": "nope"},
+            {"type": "file"},
+            {"type": "webhook"},
+            {"type": "webhook", "url": "ftp://x"},
+            {"type": "telegram"},
+            {"type": "telegram", "bot_token": "unit-test-token"},
+            {"type": "telegram", "chat_id": "987654"},
+        ):
             with self.assertRaises(NotifierError):
                 build_notifier(spec)
 
@@ -231,6 +245,18 @@ class NotifierTests(unittest.TestCase):
             with self.subTest(timeout=timeout), self.assertRaises(NotifierError):
                 build_notifier(
                     {"type": "webhook", "url": "https://hook.invalid", "timeout": timeout}
+                )
+
+    def test_rejects_invalid_telegram_timeout(self):
+        for timeout in ("invalid", None):
+            with self.subTest(timeout=timeout), self.assertRaises(NotifierError):
+                build_notifier(
+                    {
+                        "type": "telegram",
+                        "bot_token": "unit-test-token",
+                        "chat_id": "987654",
+                        "timeout": timeout,
+                    }
                 )
 
 

@@ -123,6 +123,23 @@ def _validate_auth(auth: Any) -> None:
             _require_env_secret(value, f"token auth body field {key!r}")
 
 
+def _validate_notifier_secrets(notifiers: Any) -> None:
+    if notifiers is None:
+        return
+    if not isinstance(notifiers, list):
+        return
+    for spec in notifiers:
+        if not isinstance(spec, Mapping):
+            continue
+        if str(spec.get("type", "console")).lower() != "telegram":
+            continue
+        if not spec.get("bot_token"):
+            raise ConfigError("telegram notifier requires 'bot_token'")
+        if not spec.get("chat_id"):
+            raise ConfigError("telegram notifier requires 'chat_id'")
+        _require_env_secret(spec.get("bot_token"), "telegram bot_token")
+
+
 def parse_config(data: Mapping[str, Any]) -> Config:
     """Build a :class:`Config` from an already-parsed mapping."""
     if not isinstance(data, Mapping):
@@ -137,6 +154,7 @@ def parse_config(data: Mapping[str, Any]) -> Config:
             # Auth secret validation must inspect raw placeholders before they
             # are expanded to their environment values.
             _validate_auth(entry.get("options", {}).get("auth"))
+    _validate_notifier_secrets(raw_data.get("notifiers"))
 
     data = _expand_env(raw_data)
     raw_watches = data.get("watches")
