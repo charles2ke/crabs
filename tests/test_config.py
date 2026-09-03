@@ -46,6 +46,24 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             parse_config({"watches": [{"country_from": "IE"}]})
 
+    def test_rejects_non_object_watch_options(self):
+        for options in ([], "invalid", None):
+            with self.subTest(options=options), self.assertRaisesRegex(
+                ConfigError, "watch 'options' must be an object"
+            ):
+                parse_config(
+                    {
+                        "watches": [
+                            {
+                                "country_from": "IE",
+                                "country_to": "FR",
+                                "city": "Dublin",
+                                "options": options,
+                            }
+                        ]
+                    }
+                )
+
     def test_rejects_bad_poll_interval(self):
         with self.assertRaises(ConfigError):
             parse_config({**BASE, "poll_interval": 0})

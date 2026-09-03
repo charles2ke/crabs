@@ -73,6 +73,9 @@ def parse_config(data: Mapping[str, Any]) -> Config:
         missing = [key for key in ("country_from", "country_to", "city") if not entry.get(key)]
         if missing:
             raise ConfigError(f"watch is missing required keys: {', '.join(missing)}")
+        options = entry.get("options", {})
+        if not isinstance(options, Mapping):
+            raise ConfigError("watch 'options' must be an object")
         watches.append(
             Watch(
                 country_from=str(entry["country_from"]),
@@ -80,7 +83,7 @@ def parse_config(data: Mapping[str, Any]) -> Config:
                 city=str(entry["city"]),
                 visa_category=str(entry.get("visa_category", "short-stay")),
                 provider=str(entry.get("provider", "mock")),
-                options=dict(entry.get("options") or {}),
+                options=dict(options),
             )
         )
 
