@@ -1,0 +1,7 @@
+{
+  "calendar": {
+    "days": [
+      {"available": true, "sessions": [{"time": "09:00", "count": 1}]}
+    ]
+  }
+}

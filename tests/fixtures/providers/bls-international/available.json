@@ -1,0 +1,15 @@
+{
+  "availability": [
+    {
+      "appointmentDate": "2026-12-01",
+      "appointmentTime": "13:20",
+      "available": 2
+    },
+    {
+      "appointmentDate": "2026-12-02",
+      "appointmentTime": "15:45",
+      "available": 1,
+      "bookingUrl": "https://portal.example.invalid/book?dob=1991-01-01"
+    }
+  ]
+}

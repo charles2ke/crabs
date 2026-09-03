@@ -1,0 +1,13 @@
+{
+  "data": {
+    "days": [
+      {
+        "date": "2026-10-11",
+        "times": [
+          {"time": "09:15", "count": 2, "bookingUrl": "https://portal.example.invalid/book?v=1&passport_number=P123"},
+          {"time": "11:30", "count": 1}
+        ]
+      }
+    ]
+  }
+}

@@ -19,7 +19,9 @@ in a JSON Lines log file, or to a webhook (Slack, Discord, ntfy, …).
 - **Watch many consulates at once** — one entry per country/city/visa category.
 - **Pluggable providers** — a generic `http-json` provider is configured
   declaratively (URL, keys, date format), so a new portal needs a config edit
-  only, not code. A `mock` provider makes demos and tests fully offline.
+  only, not code. Built-in adapters are available for `vfs-global`,
+  `tlscontact`, and `bls-international` when you have a permitted JSON access
+  path. A `mock` provider makes demos and tests fully offline.
 - **Alert on every available slot**, de-duplicated so you are notified once per
   slot; if a slot disappears and comes back it alerts again.
 - **Multiple alert sinks** — `console`, `file` (JSON Lines), `webhook`.
@@ -59,9 +61,10 @@ python -m openclaw --config examples/dublin.json --once
 Run it again and nothing is reported — already-alerted slots are remembered in
 the `state_file`. Drop the `--once` flag to keep polling forever.
 
-To watch a real portal, start from `examples/dublin_http.json`, which uses the
-`http-json` provider, and point it at the availability endpoint you are entitled
-to poll:
+To watch a real portal, start from `examples/dublin_http.json` (generic JSON) or
+`examples/dublin_vfs.json`, `examples/dublin_tls.json`, `examples/dublin_bls.json`
+(partner-specific templates), then point options at endpoints you are entitled to
+poll:
 
 ```bash
 export OPENCLAW_WEBHOOK_URL="https://hooks.example.com/your-hook"
@@ -107,8 +110,18 @@ Exit code `0` on success, `2` for configuration errors.
 | `country_to` | yes | Schengen state you apply to, e.g. `"FR"`. |
 | `city` | yes | Appointment centre location, e.g. `"Dublin"`. |
 | `visa_category` | no | Defaults to `"short-stay"`. |
-| `provider` | no | `"mock"` (default) or `"http-json"`. |
+| `provider` | no | `"mock"` (default), `"http-json"`, `"vfs-global"`, `"tlscontact"`, or `"bls-international"`. |
 | `options` | no | Provider-specific settings. |
+
+### Provider reference
+
+| Provider | Required options | Auth modes | Caveats |
+| --- | --- | --- | --- |
+| `mock` | none (`slots` or `file` optional) | n/a | Offline/testing only. |
+| `http-json` | `url` | `none`, `form`, `token`, `basic` | Generic JSON list parser. |
+| `vfs-global` | `base_url`, `availability_path`, `centre_code`, `category_code`, `mission_code` | `none`, `form`, `token`, `basic` | Requires a permitted JSON calendar/availability path; no anti-bot/CAPTCHA bypass support. |
+| `tlscontact` | `base_url`, `availability_path`, `location_code`, `category_code`, `destination_code` | `none`, `form`, `token`, `basic` | Requires a permitted JSON calendar path; no anti-bot/CAPTCHA bypass support. |
+| `bls-international` | `base_url`, `availability_path`, `centre_code`, `category_code`, `mission_code` | `none`, `form`, `token`, `basic` | Requires a permitted JSON availability path; no anti-bot/CAPTCHA bypass support. |
 
 ### Provider options
 
@@ -129,6 +142,22 @@ Exit code `0` on success, `2` for configuration errors.
 **`mock`** — inline `slots` (`[{"date": "...", "time": "...", "seats": 1}]`) or a
 `file` containing the same list.
 
+**`vfs-global`, `tlscontact`, `bls-international`** share a declarative shape:
+
+| Option | Description |
+| --- | --- |
+| `base_url` | Required portal host, e.g. `https://partner.example.invalid`. |
+| `availability_path` | Required calendar/availability endpoint path. |
+| `centre_code` / `location_code` | Provider-specific centre/location identifier. |
+| `category_code` | Visa category code required by the portal. |
+| `sub_category_code` | Optional visa sub-category code. |
+| `mission_code` / `destination_code` | Mission/destination country code used by the endpoint. |
+| `query` | Optional extra static query params. |
+| `headers` | Optional request headers (values may use `${ENV_VAR}`). |
+| `booking_path` + `booking_query` | Optional fallback deep link used in alerts. |
+| `response` | Optional response mapping (`items_path`, `date_key`, `time_key`, `seats_key`, etc.). |
+| `auth` | Optional authenticated-portal block; see below. |
+
 ### Notifiers
 
 | Type | Options | Behaviour |
@@ -143,7 +172,8 @@ tokens and webhook URLs never need to be committed.
 
 ### Authenticated portals
 
-`http-json` watches may include an `options.auth` block. Authentication is lazy:
+`http-json`, `vfs-global`, `tlscontact`, and `bls-international` watches may
+include an `options.auth` block. Authentication is lazy:
 Open Claw logs in on the first fetch for that watch, stores cookies and token
 headers in memory, and reuses the same per-watch session across poll cycles.
 Nothing auth-related is written to the `state_file`. If a slots request returns
@@ -157,8 +187,7 @@ auth fields such as `password`, `*_secret`, `api_key`, or `access_token` are
 rejected with `ConfigError` so secrets are not accidentally committed. Open Claw
 also avoids logging credentials, cookies, tokens, or `Authorization` values.
 
-**`auth.type: "none"`** is the default and preserves the unauthenticated
-`http-json` behavior.
+**`auth.type: "none"`** is the default and preserves unauthenticated behavior.
 
 **`auth.type: "form"`** posts classic form credentials and keeps any session
 cookies set by the portal:
@@ -177,6 +206,18 @@ cookies set by the portal:
   "success_status": [200, 302]
 }
 ```
+
+### Adapter notes: VFS Global, TLScontact, BLS International
+
+Each adapter is inert unless a watch explicitly sets that provider name.
+
+- Configure only endpoints and account flows you are explicitly permitted to use.
+- Operator responsibility: confirm ToS, local law, and mission-specific rules
+  before polling or automated sign-in.
+- If a portal returns CAPTCHA / anti-bot challenges, Open Claw fails cleanly and
+  does not attempt bypassing.
+- Open Claw observes availability only. It does not submit applications, hold
+  seats, or auto-book appointments.
 
 **`auth.type: "token"`** posts JSON to a token endpoint and injects the returned
 token into a request header:
@@ -223,16 +264,24 @@ register_provider(MyPortalProvider.name, MyPortalProvider)
 python -m unittest discover -s tests -v
 ```
 
-The test suite is offline and covers config validation, both providers,
+The test suite is offline and covers config validation, providers/adapters,
 de-duplication, date windows, notifiers and the CLI.
 
 ## Responsible use
 
-Open Claw only reads endpoints **you** configure — it does not bundle, bypass or
-scrape any consulate portal, and it never books an appointment for you. Login
-support uses credentials you already legitimately own; it is not a way to bypass
-access controls. Before pointing it at a live site, check that portal's terms of
-service. Automated login or polling may violate some portals' terms and can risk
-account suspension. Keep `poll_interval` generous (10 minutes or more), keep
-`jitter` enabled, and stop polling if the portal asks you to. You are responsible
-for how you use it.
+Open Claw only reads endpoints **you** configure — it does not bundle live
+consulate URLs and does not bypass CAPTCHA, anti-bot controls, WAFs, rate limits,
+or authentication. If a configured endpoint is gated by those controls without a
+supported API/session flow, the watch fails with an operator-facing message.
+
+Open Claw never auto-books, holds, or submits appointments. It is an observe +
+notify tool only.
+
+Credentials must come from `${ENV_VAR}` placeholders in config. Literal
+password-like secrets are rejected. Open Claw also avoids logging credentials and
+redacts common personal identifiers from booking-link query strings.
+
+Before polling any VFS/TLScontact/BLS (or other) portal, verify that your access
+path and polling behavior comply with that portal's terms plus local law. Keep
+`poll_interval` generous (10 minutes or more), keep `jitter` enabled, and stop if
+the portal requests that you do so. You are responsible for compliant use.

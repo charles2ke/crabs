@@ -1,0 +1,19 @@
+{
+  "calendar": {
+    "days": [
+      {
+        "date": "2026-11-02",
+        "available": true,
+        "sessions": [
+          {"time": "08:45", "count": 1},
+          {"time": "10:00", "count": 3, "bookingUrl": "https://portal.example.invalid/book?first_name=Ana"}
+        ]
+      },
+      {
+        "date": "2026-11-03",
+        "available": false,
+        "sessions": [{"time": "09:00", "count": 2}]
+      }
+    ]
+  }
+}
