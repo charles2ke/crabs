@@ -31,6 +31,13 @@ class VfsGlobalProvider(HttpJsonProvider, Provider):
             raise ProviderError(
                 f"watch {watch.label!r} is missing 'base_url' or 'availability_path' options"
             )
+        missing = [
+            key for key in ("centre_code", "category_code", "mission_code") if not options.get(key)
+        ]
+        if missing:
+            raise ProviderError(
+                f"watch {watch.label!r} is missing required VFS option(s): {', '.join(missing)}"
+            )
 
         query = dict(options.get("query") or {})
         query[str(options.get("centre_param", "centreCode"))] = options.get("centre_code")

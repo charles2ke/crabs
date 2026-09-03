@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import urllib.parse
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Mapping
 
 from ..auth import redact_url
@@ -42,7 +42,7 @@ def value_at(payload: Any, dotted_path: str | None, *, default: Any = None) -> A
     return current
 
 
-def parse_slot_date(raw: Any, date_format: str) -> datetime.date:
+def parse_slot_date(raw: Any, date_format: str) -> date:
     """Parse one slot date using the configured format."""
     try:
         return datetime.strptime(str(raw), date_format).date()

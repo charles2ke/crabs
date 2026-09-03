@@ -31,6 +31,15 @@ class TlscontactProvider(HttpJsonProvider, Provider):
             raise ProviderError(
                 f"watch {watch.label!r} is missing 'base_url' or 'availability_path' options"
             )
+        missing = [
+            key
+            for key in ("location_code", "category_code", "destination_code")
+            if not options.get(key)
+        ]
+        if missing:
+            raise ProviderError(
+                f"watch {watch.label!r} is missing required TLScontact option(s): {', '.join(missing)}"
+            )
 
         query = dict(options.get("query") or {})
         query[str(options.get("location_param", "locationCode"))] = options.get("location_code")

@@ -197,6 +197,7 @@ class TlscontactProviderTests(unittest.TestCase):
         self.assertEqual(len(slots), 2)
         self.assertEqual(slots[0].slot_date, date(2026, 11, 2))
         self.assertEqual(slots[0].slot_time, "08:45")
+        self.assertTrue(all(slot.slot_date == date(2026, 11, 2) for slot in slots))
         self.assertIn("first_name=%3Credacted%3E", slots[1].booking_url or "")
 
     def test_parse_empty(self):
@@ -288,6 +289,46 @@ class AdapterHttpStatusTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ProviderError, "rate limited"):
             provider.fetch(watch)
+
+    def test_missing_required_query_options_are_rejected(self):
+        watches = [
+            (
+                VfsGlobalProvider(),
+                Watch(
+                    "IE",
+                    "FR",
+                    "Dublin",
+                    provider="vfs-global",
+                    options={"base_url": "https://x.invalid", "availability_path": "/a"},
+                ),
+                "VFS option",
+            ),
+            (
+                TlscontactProvider(),
+                Watch(
+                    "IE",
+                    "ES",
+                    "Dublin",
+                    provider="tlscontact",
+                    options={"base_url": "https://x.invalid", "availability_path": "/a"},
+                ),
+                "TLScontact option",
+            ),
+            (
+                BlsInternationalProvider(),
+                Watch(
+                    "IE",
+                    "PT",
+                    "Dublin",
+                    provider="bls-international",
+                    options={"base_url": "https://x.invalid", "availability_path": "/a"},
+                ),
+                "BLS option",
+            ),
+        ]
+        for provider, watch, label in watches:
+            with self.subTest(provider=provider.name), self.assertRaisesRegex(ProviderError, label):
+                provider.fetch(watch)
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
