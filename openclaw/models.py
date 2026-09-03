@@ -25,6 +25,10 @@ class Watch:
     provider: str = "mock"
     # Provider specific settings (endpoint URLs, centre ids, ...).
     options: Mapping[str, Any] = field(default_factory=dict)
+    alert_on: tuple[str, ...] = ("new",)
+    quiet_hours: Mapping[str, Any] | None = None
+    throttle: Mapping[str, Any] = field(default_factory=dict)
+    health: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def label(self) -> str:
@@ -71,13 +75,22 @@ class Slot:
 
 @dataclass(frozen=True)
 class Alert:
-    """A batch of newly discovered slots for one watch."""
+    """A slot-change or provider-health event for one watch."""
 
     watch: Watch
     slots: tuple[Slot, ...]
     created_at: datetime
+    event_type: str = "new"
+    message: str | None = None
 
     def to_text(self) -> str:
-        lines = [f"{len(self.slots)} new Schengen slot(s) for {self.watch.label}:"]
+        if self.event_type == "health":
+            return f"Health warning for {self.watch.label}: {self.message or 'provider is stale'}"
+        event = {
+            "new": "new",
+            "disappeared": "disappeared",
+            "improved": "improved",
+        }.get(self.event_type, self.event_type)
+        lines = [f"{len(self.slots)} {event} Schengen slot(s) for {self.watch.label}:"]
         lines.extend(f"  * {slot.describe()}" for slot in self.slots)
         return "\n".join(lines)

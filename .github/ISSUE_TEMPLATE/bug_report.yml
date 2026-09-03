@@ -1,0 +1,25 @@
+name: Bug report
+description: Report reproducible incorrect behavior
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, personal data, or undisclosed vulnerabilities.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description and reproduction
+      description: Include expected behavior, actual behavior, and a minimal redacted config.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Open Claw and Python versions
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs

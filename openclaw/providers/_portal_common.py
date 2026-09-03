@@ -18,6 +18,7 @@ _PII_QUERY_KEYS = {
     "application_number",
     "dob",
     "date_of_birth",
+    "email",
     "first_name",
     "lastname",
     "last_name",
