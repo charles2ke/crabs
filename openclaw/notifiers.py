@@ -159,9 +159,6 @@ class TelegramNotifier(Notifier):
         self.sleeper = sleeper
         self.message_limit = message_limit
         self.url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        scheme = urllib.parse.urlparse(self.url).scheme.lower()
-        if scheme != "https":  # Defensive: the URL is constructed above.
-            raise NotifierError("unsupported Telegram URL scheme")
 
     def send(self, alert: Alert) -> None:
         for message in self._format_messages(alert):
@@ -195,12 +192,16 @@ class TelegramNotifier(Notifier):
     def _format_header(alert: Alert, *, continuation: bool = False) -> str:
         count = len(alert.slots)
         suffix = " (continued)" if continuation else ""
+        city = html.escape(str(alert.watch.city or ""))
+        country_from = html.escape(str(alert.watch.country_from or ""))
+        country_to = html.escape(str(alert.watch.country_to or ""))
+        visa_category = html.escape(str(alert.watch.visa_category or ""))
         return "\n".join(
             [
                 f"<b>{count} new Schengen slot(s){suffix}</b>",
-                f"Centre: {html.escape(alert.watch.city)} ({html.escape(alert.watch.country_from)})",
-                f"Destination: {html.escape(alert.watch.country_to)}",
-                f"Visa category: {html.escape(alert.watch.visa_category)}",
+                f"Centre: {city} ({country_from})",
+                f"Destination: {country_to}",
+                f"Visa category: {visa_category}",
             ]
         )
 
@@ -253,7 +254,7 @@ class TelegramNotifier(Notifier):
             allow_retry
             and status == 429
             and retry_after is not None
-            and 0 <= retry_after <= MAX_TELEGRAM_RETRY_AFTER
+            and 0 < retry_after <= MAX_TELEGRAM_RETRY_AFTER
         ):
             self.sleeper(retry_after)
             self._post(payload, allow_retry=False)
