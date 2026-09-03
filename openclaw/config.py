@@ -8,7 +8,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .models import Watch
 
@@ -33,6 +34,31 @@ class Config:
     state_file: Path | None = None
     jitter: float = 0.0
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    quiet_hours: Mapping[str, Any] | None = None
+    throttle: Mapping[str, Any] = field(default_factory=dict)
+    health: Mapping[str, Any] = field(default_factory=dict)
+
+
+def missing_env_vars(value: Any) -> tuple[str, ...]:
+    """Return unresolved environment-variable names without exposing values."""
+    names: set[str] = set()
+
+    def visit(item: Any) -> None:
+        if isinstance(item, str):
+            names.update(
+                match.group(1)
+                for match in ENV_PATTERN.finditer(item)
+                if match.group(1) not in os.environ
+            )
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+        elif isinstance(item, Mapping):
+            for child in item.values():
+                visit(child)
+
+    visit(value)
+    return tuple(sorted(names))
 
 
 def _expand_env(value: Any) -> Any:
@@ -140,6 +166,52 @@ def _validate_notifier_secrets(notifiers: Any) -> None:
         _require_env_secret(spec.get("bot_token"), "telegram bot_token")
 
 
+def _parse_clock(raw: Any, label: str) -> None:
+    try:
+        datetime.strptime(str(raw), "%H:%M")
+    except ValueError as exc:
+        raise ConfigError(f"{label} must use HH:MM") from exc
+
+
+def _validate_quiet_hours(value: Any, label: str) -> Mapping[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ConfigError(f"{label} must be an object")
+    missing = [key for key in ("start", "end", "timezone") if not value.get(key)]
+    if missing:
+        raise ConfigError(f"{label} is missing: {', '.join(missing)}")
+    _parse_clock(value["start"], f"{label}.start")
+    _parse_clock(value["end"], f"{label}.end")
+    try:
+        ZoneInfo(str(value["timezone"]))
+    except ZoneInfoNotFoundError as exc:
+        raise ConfigError(f"{label}.timezone is unknown: {value['timezone']!r}") from exc
+    return dict(value)
+
+
+def _validate_limits(value: Any, label: str, allowed: Iterable[str]) -> Mapping[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ConfigError(f"{label} must be an object")
+    unknown = set(value) - set(allowed)
+    if unknown:
+        raise ConfigError(f"{label} has unknown settings: {', '.join(sorted(unknown))}")
+    result: dict[str, Any] = {}
+    for key, raw in value.items():
+        try:
+            number = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"{label}.{key} must be numeric") from exc
+        if number <= 0:
+            raise ConfigError(f"{label}.{key} must be greater than 0")
+        result[key] = int(number) if number.is_integer() else number
+    if ("max_alerts" in result) != ("interval_seconds" in result):
+        raise ConfigError(f"{label} requires both max_alerts and interval_seconds")
+    return result
+
+
 def parse_config(data: Mapping[str, Any]) -> Config:
     """Build a :class:`Config` from an already-parsed mapping."""
     if not isinstance(data, Mapping):
@@ -156,8 +228,13 @@ def parse_config(data: Mapping[str, Any]) -> Config:
             _validate_auth(entry.get("options", {}).get("auth"))
     _validate_notifier_secrets(raw_data.get("notifiers"))
 
-    data = _expand_env(raw_data)
+    expanded = _expand_env(raw_data)
+    if not isinstance(expanded, Mapping):  # pragma: no cover - shape preserved
+        raise ConfigError("configuration must be a JSON object")
+    data = expanded
     raw_watches = data.get("watches")
+    if not isinstance(raw_watches, list):  # pragma: no cover - validated above
+        raise ConfigError("configuration needs a non-empty 'watches' list")
 
     watches: list[Watch] = []
     for entry in raw_watches:
@@ -169,6 +246,15 @@ def parse_config(data: Mapping[str, Any]) -> Config:
         options = entry.get("options", {})
         if not isinstance(options, Mapping):
             raise ConfigError("watch 'options' must be an object")
+        raw_alert_on = entry.get("alert_on", ["new"])
+        if not isinstance(raw_alert_on, list) or not raw_alert_on:
+            raise ConfigError("watch 'alert_on' must be a non-empty list")
+        alert_on = tuple(str(event).lower() for event in raw_alert_on)
+        invalid_events = set(alert_on) - {"new", "disappeared", "improved"}
+        if invalid_events:
+            raise ConfigError(
+                "watch 'alert_on' has unknown events: " + ", ".join(sorted(invalid_events))
+            )
         watches.append(
             Watch(
                 country_from=str(entry["country_from"]),
@@ -177,6 +263,24 @@ def parse_config(data: Mapping[str, Any]) -> Config:
                 visa_category=str(entry.get("visa_category", "short-stay")),
                 provider=str(entry.get("provider", "mock")),
                 options=dict(options),
+                alert_on=alert_on,
+                quiet_hours=_validate_quiet_hours(
+                    entry.get("quiet_hours"), "watch 'quiet_hours'"
+                ),
+                throttle=_validate_limits(
+                    entry.get("throttle"),
+                    "watch 'throttle'",
+                    ("max_alerts", "interval_seconds", "minimum_gap_seconds"),
+                ),
+                health=_validate_limits(
+                    entry.get("health"),
+                    "watch 'health'",
+                    (
+                        "max_consecutive_empty",
+                        "max_consecutive_errors",
+                        "max_stale_hours",
+                    ),
+                ),
             )
         )
 
@@ -212,6 +316,17 @@ def parse_config(data: Mapping[str, Any]) -> Config:
         state_file=Path(str(state_file)).expanduser() if state_file else None,
         jitter=jitter,
         metadata=dict(data.get("metadata") or {}),
+        quiet_hours=_validate_quiet_hours(data.get("quiet_hours"), "'quiet_hours'"),
+        throttle=_validate_limits(
+            data.get("throttle"),
+            "'throttle'",
+            ("max_alerts", "interval_seconds", "minimum_gap_seconds"),
+        ),
+        health=_validate_limits(
+            data.get("health"),
+            "'health'",
+            ("max_consecutive_empty", "max_consecutive_errors", "max_stale_hours"),
+        ),
     )
 
 
@@ -225,3 +340,21 @@ def load_config(path: str | Path) -> Config:
     except json.JSONDecodeError as exc:
         raise ConfigError(f"config {config_path} is not valid JSON: {exc}") from exc
     return parse_config(raw)
+
+
+def inspect_config(path: str | Path) -> tuple[Config, tuple[str, ...]]:
+    """Load config for offline diagnostics and report missing env names."""
+    config_path = Path(path).expanduser()
+    try:
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ConfigError(f"cannot read config {config_path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"config {config_path} is not valid JSON: {exc}") from exc
+    if not isinstance(raw, Mapping):
+        raise ConfigError("configuration must be a JSON object")
+    missing = missing_env_vars(raw)
+    if missing:
+        raise ConfigError(f"missing environment variables: {', '.join(missing)}")
+    config = parse_config(raw)
+    return config, missing

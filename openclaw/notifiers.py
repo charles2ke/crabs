@@ -73,6 +73,8 @@ class FileNotifier(Notifier):
         record = {
             "created_at": alert.created_at.isoformat(),
             "watch": alert.watch.label,
+            "event_type": alert.event_type,
+            "message": alert.message,
             "slots": [slot.describe() for slot in alert.slots],
         }
         try:
@@ -94,9 +96,14 @@ class WebhookNotifier(Notifier):
         headers: Mapping[str, str] | None = None,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
-        scheme = urllib.parse.urlparse(url).scheme.lower()
+        parsed = urllib.parse.urlparse(url)
+        scheme = parsed.scheme.lower()
         if scheme not in ("http", "https"):
             raise NotifierError(f"unsupported webhook URL scheme {scheme!r}")
+        if not parsed.hostname:
+            raise NotifierError("webhook URL must include a host")
+        if timeout <= 0:
+            raise NotifierError("webhook timeout must be greater than 0")
         self.url = url
         self.headers = dict(headers or {})
         self.timeout = timeout
@@ -105,6 +112,8 @@ class WebhookNotifier(Notifier):
         payload: dict[str, Any] = {
             "text": alert.to_text(),
             "watch": alert.watch.label,
+            "event_type": alert.event_type,
+            "message": alert.message,
             "created_at": alert.created_at.isoformat(),
             "slots": [
                 {
@@ -126,7 +135,10 @@ class WebhookNotifier(Notifier):
             with urllib.request.urlopen(  # noqa: S310 - scheme validated in __init__
                 request, timeout=self.timeout
             ) as response:
+                status = response.getcode()
                 response.read(1024)
+                if status < 200 or status >= 300:
+                    raise NotifierError(f"webhook delivery failed: HTTP {status}")
         except (urllib.error.URLError, OSError) as exc:
             raise NotifierError(f"webhook delivery failed: {exc}") from exc
 
@@ -165,6 +177,8 @@ class TelegramNotifier(Notifier):
             self._send_message(message)
 
     def _format_messages(self, alert: Alert) -> list[str]:
+        if alert.event_type == "health":
+            return [self._format_header(alert, 0)]
         chunks: list[list[str]] = []
         current_lines: list[str] = []
         for slot in alert.slots:
@@ -206,14 +220,20 @@ class TelegramNotifier(Notifier):
         country_from = html.escape(str(alert.watch.country_from or ""))
         country_to = html.escape(str(alert.watch.country_to or ""))
         visa_category = html.escape(str(alert.watch.visa_category or ""))
-        return "\n".join(
-            [
-                f"<b>{count} new Schengen slot(s){suffix}</b>",
-                f"Centre: {city} ({country_from})",
-                f"Destination: {country_to}",
-                f"Visa category: {visa_category}",
-            ]
-        )
+        if alert.event_type == "health":
+            heading = "<b>Provider health warning</b>"
+        else:
+            event = html.escape(alert.event_type)
+            heading = f"<b>{count} {event} Schengen slot(s){suffix}</b>"
+        lines = [
+            heading,
+            f"Centre: {city} ({country_from})",
+            f"Destination: {country_to}",
+            f"Visa category: {visa_category}",
+        ]
+        if alert.message:
+            lines.append(html.escape(alert.message))
+        return "\n".join(lines)
 
     @staticmethod
     def _format_slot(slot: Slot) -> str:
