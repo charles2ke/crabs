@@ -165,32 +165,42 @@ class TelegramNotifier(Notifier):
             self._send_message(message)
 
     def _format_messages(self, alert: Alert) -> list[str]:
-        header = self._format_header(alert)
-        continuation_header = self._format_header(alert, continuation=True)
-        messages: list[str] = []
-        current = header
-        current_slots = 0
+        chunks: list[list[str]] = []
+        current_lines: list[str] = []
         for slot in alert.slots:
             line = self._format_slot(slot)
-            candidate = f"{current}\n{line}"
+            header = self._format_header(
+                alert, len(current_lines) + 1, continuation=bool(chunks)
+            )
+            candidate = "\n".join([header, *current_lines, line])
             if len(candidate) <= self.message_limit:
-                current = candidate
-                current_slots += 1
+                current_lines.append(line)
                 continue
-            if current_slots == 0:
-                raise NotifierError("telegram message slot line exceeds Telegram length limit")
+            if not current_lines:
+                raise NotifierError(
+                    "telegram initial slot line exceeds Telegram length limit"
+                )
 
-            messages.append(current)
-            current = f"{continuation_header}\n{line}"
-            if len(current) > self.message_limit:
-                raise NotifierError("telegram message slot line exceeds Telegram length limit")
-            current_slots = 1
-        messages.append(current)
-        return messages
+            chunks.append(current_lines)
+            current_lines = [line]
+            header = self._format_header(alert, 1, continuation=True)
+            if len("\n".join([header, line])) > self.message_limit:
+                raise NotifierError(
+                    "telegram continuation slot line exceeds Telegram length limit"
+                )
+        chunks.append(current_lines)
+        return [
+            "\n".join(
+                [
+                    self._format_header(alert, len(chunk), continuation=index > 0),
+                    *chunk,
+                ]
+            )
+            for index, chunk in enumerate(chunks)
+        ]
 
     @staticmethod
-    def _format_header(alert: Alert, *, continuation: bool = False) -> str:
-        count = len(alert.slots)
+    def _format_header(alert: Alert, count: int, *, continuation: bool = False) -> str:
         suffix = " (continued)" if continuation else ""
         city = html.escape(str(alert.watch.city or ""))
         country_from = html.escape(str(alert.watch.country_from or ""))
