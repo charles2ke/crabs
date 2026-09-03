@@ -112,10 +112,19 @@ Exit code `0` on success, `2` for configuration errors.
 
 ### Provider options
 
-**`http-json`** — `url` (required, `http`/`https` only), `headers`, `items_key`
-(key holding the list), `date_key` (default `date`), `date_format` (default
-`%Y-%m-%d`), `time_key`, `seats_key` (entries with `0` seats are skipped) and
-`booking_url`.
+**`http-json`**
+
+| Option | Description |
+| --- | --- |
+| `url` | Required JSON availability endpoint (`http`/`https` only). |
+| `headers` | Extra static request headers. Values may use `${ENV_VAR}` placeholders. |
+| `items_key` | Optional key holding the list of slot entries. |
+| `date_key` | Slot date key (default `date`). |
+| `date_format` | Python date format (default `%Y-%m-%d`). |
+| `time_key` | Optional slot time key. |
+| `seats_key` | Optional seats key; entries with `0` seats are skipped. |
+| `booking_url` | Fallback booking URL for slot alerts. |
+| `auth` | Optional authenticated-portal block; see below. |
 
 **`mock`** — inline `slots` (`[{"date": "...", "time": "...", "seats": 1}]`) or a
 `file` containing the same list.
@@ -130,6 +139,69 @@ Exit code `0` on success, `2` for configuration errors.
 
 Any `${VAR}` in the config is replaced with the environment variable `VAR`, so
 tokens and webhook URLs never need to be committed.
+
+
+### Authenticated portals
+
+`http-json` watches may include an `options.auth` block. Authentication is lazy:
+Open Claw logs in on the first fetch for that watch, stores cookies and token
+headers in memory, and reuses the same per-watch session across poll cycles.
+Nothing auth-related is written to the `state_file`. If a slots request returns
+401/403, redirects to the login URL, or a recorded token expiry has passed, Open
+Claw re-authenticates once and retries that fetch once. If that also fails, the
+watch logs an `AuthenticationError` and the monitor continues polling other
+watches.
+
+Use `${ENV_VAR}` placeholders for credential values. Literal password-like
+auth fields such as `password`, `*_secret`, `api_key`, or `access_token` are
+rejected with `ConfigError` so secrets are not accidentally committed. Open Claw
+also avoids logging credentials, cookies, tokens, or `Authorization` values.
+
+**`auth.type: "none"`** is the default and preserves the unauthenticated
+`http-json` behavior.
+
+**`auth.type: "form"`** posts classic form credentials and keeps any session
+cookies set by the portal:
+
+```jsonc
+"auth": {
+  "type": "form",
+  "login_url": "https://portal.example/login",
+  "fields": { "username": "${OPENCLAW_USER}", "password": "${OPENCLAW_PASS}" },
+  "encoding": "form",              // "form" (default) or "json"
+  "csrf": {                         // optional
+    "url": "https://portal.example/login",
+    "regex": "name=\"_csrf\" value=\"([^\"]+)\"",
+    "field": "_csrf"
+  },
+  "success_status": [200, 302]
+}
+```
+
+**`auth.type: "token"`** posts JSON to a token endpoint and injects the returned
+token into a request header:
+
+```jsonc
+"auth": {
+  "type": "token",
+  "login_url": "https://portal.example/api/auth",
+  "body": { "email": "${OPENCLAW_USER}", "password": "${OPENCLAW_PASS}" },
+  "token_key": "access_token",       // dotted paths like "data.token" work
+  "expires_key": "expires_in",       // optional seconds until expiry
+  "header": "Authorization",         // default
+  "header_format": "Bearer {token}" // default
+}
+```
+
+**`auth.type: "basic"`** sends HTTP Basic credentials on slot requests:
+
+```jsonc
+"auth": {
+  "type": "basic",
+  "username": "${OPENCLAW_USER}",
+  "password": "${OPENCLAW_PASS}"
+}
+```
 
 ## Adding a new portal in code
 
@@ -157,7 +229,10 @@ de-duplication, date windows, notifiers and the CLI.
 ## Responsible use
 
 Open Claw only reads endpoints **you** configure — it does not bundle, bypass or
-scrape any consulate portal, and it never books an appointment for you. Before
-pointing it at a live site, check that portal's terms of service, keep
-`poll_interval` generous (10 minutes or more) and keep `jitter` enabled. You are
-responsible for how you use it.
+scrape any consulate portal, and it never books an appointment for you. Login
+support uses credentials you already legitimately own; it is not a way to bypass
+access controls. Before pointing it at a live site, check that portal's terms of
+service. Automated login or polling may violate some portals' terms and can risk
+account suspension. Keep `poll_interval` generous (10 minutes or more), keep
+`jitter` enabled, and stop polling if the portal asks you to. You are responsible
+for how you use it.

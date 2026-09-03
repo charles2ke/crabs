@@ -12,6 +12,10 @@ class ProviderError(RuntimeError):
     """Raised when a provider cannot report slot availability."""
 
 
+class AuthenticationError(ProviderError):
+    """Raised when provider authentication fails or a session expires."""
+
+
 class Provider(abc.ABC):
     """Base class for slot providers."""
 
