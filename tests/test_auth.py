@@ -90,8 +90,7 @@ class PortalHandler(BaseHTTPRequestHandler):
         if self.path == "/token":
             self.state["login_posts"] = self.state.get("login_posts", 0) + 1
             token = f"tok{self.state['login_posts']}"
-            prefix = "".join(chr(code) for code in (66, 101, 97, 114, 101, 114, 32))
-            self.state["valid_auth"] = f"{prefix}{token}"
+            self.state["valid_auth"] = "Bearer " + token
             payload = {"data": {"token": token}, "expires_in": self.state.get("expires_in", 3600)}
             self._send(
                 200,
@@ -150,13 +149,12 @@ class AuthServerTestCase(unittest.TestCase):
         posted = parse_qs(self.server.state["last_login_body"])
         self.assertEqual(posted["_csrf"], ["csrf123"])
 
-    def test_form_login_accepts_configured_302_success(self):
+    def test_form_login_accepts_default_302_success(self):
         self.server.state["login_redirects"] = True
         auth = {
             "type": "form",
             "login_url": self.base_url + "/login",
             "fields": {"username": "alice", "password": "secret"},
-            "success_status": [302],
         }
         slots = HttpJsonProvider().fetch(self._watch(auth))
         self.assertEqual(len(slots), 1)

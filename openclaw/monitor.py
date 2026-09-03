@@ -100,7 +100,7 @@ class Monitor:
 
     def check_watch(self, watch: Watch) -> list[Slot]:
         """Return the in-window slots currently offered for ``watch``."""
-        provider_key = f"{watch.provider}\0{watch.label}"
+        provider_key = f"{watch.provider}::{watch.label}"
         provider = self._providers.get(provider_key)
         if provider is None:
             provider = get_provider(watch.provider)

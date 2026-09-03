@@ -18,9 +18,7 @@ DEFAULT_TIMEOUT = 20.0
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 
 
-DEFAULT_TOKEN_HEADER_FORMAT = "".join(
-    chr(code) for code in (66, 101, 97, 114, 101, 114, 32, 123, 116, 111, 107, 101, 110, 125)
-)
+DEFAULT_TOKEN_HEADER_FORMAT = "Bearer " + "{token}"
 _SENSITIVE_QUERY_KEYS = {
     "access_token",
     "api_key",
