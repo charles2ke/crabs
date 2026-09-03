@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
@@ -254,8 +255,6 @@ class AuthServerTestCase(unittest.TestCase):
 
     def test_secret_does_not_appear_in_logs_or_exception(self):
         self.server.state["login_fails"] = True
-        import os
-
         secret = "super-secret-value"
         os.environ["OPENCLAW_TEST_PASS"] = secret
         auth = {
@@ -332,8 +331,6 @@ class AuthConfigTests(unittest.TestCase):
             )
 
     def test_config_accepts_env_password_placeholder(self):
-        import os
-
         os.environ["OPENCLAW_PASS"] = "expanded-secret"
         try:
             config = parse_config(
@@ -359,6 +356,37 @@ class AuthConfigTests(unittest.TestCase):
         finally:
             del os.environ["OPENCLAW_PASS"]
         self.assertEqual(config.watches[0].options["auth"]["password"], "expanded-secret")
+
+    def test_config_rejects_invalid_form_success_status(self):
+        os.environ["OPENCLAW_PASS"] = "expanded-secret"
+        try:
+            with self.assertRaisesRegex(ConfigError, "success_status"):
+                parse_config(
+                    {
+                        "watches": [
+                            {
+                                "country_from": "IE",
+                                "country_to": "FR",
+                                "city": "Dublin",
+                                "provider": "http-json",
+                                "options": {
+                                    "url": "https://portal.invalid/api",
+                                    "auth": {
+                                        "type": "form",
+                                        "login_url": "https://portal.invalid/login",
+                                        "fields": {
+                                            "username": "alice",
+                                            "password": "${OPENCLAW_PASS}",
+                                        },
+                                        "success_status": ["ok"],
+                                    },
+                                },
+                            }
+                        ]
+                    }
+                )
+        finally:
+            del os.environ["OPENCLAW_PASS"]
 
 
 if __name__ == "__main__":  # pragma: no cover

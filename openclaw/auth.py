@@ -18,7 +18,7 @@ DEFAULT_TIMEOUT = 20.0
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 
 
-DEFAULT_TOKEN_HEADER_FORMAT = "Bearer " + "{token}"
+DEFAULT_TOKEN_HEADER_FORMAT = "Bearer {token}"
 _SENSITIVE_QUERY_KEYS = {
     "access_token",
     "api_key",

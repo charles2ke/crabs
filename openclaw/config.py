@@ -101,6 +101,14 @@ def _validate_auth(auth: Any) -> None:
         encoding = str(auth.get("encoding", "form")).lower()
         if encoding not in {"form", "json"}:
             raise ConfigError("form auth 'encoding' must be 'form' or 'json'")
+        if "success_status" in auth:
+            success_status = auth["success_status"]
+            if not isinstance(success_status, list) or not success_status:
+                raise ConfigError("form auth 'success_status' must be a non-empty list")
+            try:
+                [int(code) for code in success_status]
+            except (TypeError, ValueError) as exc:
+                raise ConfigError("form auth 'success_status' values must be integers") from exc
         csrf = auth.get("csrf")
         if csrf is not None:
             if not isinstance(csrf, Mapping):

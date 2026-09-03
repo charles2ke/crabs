@@ -100,11 +100,10 @@ class Monitor:
 
     def check_watch(self, watch: Watch) -> list[Slot]:
         """Return the in-window slots currently offered for ``watch``."""
-        provider_key = f"{watch.provider}::{watch.label}"
-        provider = self._providers.get(provider_key)
+        provider = self._providers.get(watch.provider)
         if provider is None:
             provider = get_provider(watch.provider)
-            self._providers[provider_key] = provider
+            self._providers[watch.provider] = provider
         slots = provider.fetch(watch)
         return sorted(
             (slot for slot in slots if in_window(slot, self.config.earliest, self.config.latest)),
