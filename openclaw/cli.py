@@ -18,7 +18,7 @@ from .providers import ProviderError
 
 LOGGER = logging.getLogger("openclaw")
 
-#: Ran successfully, no new slots were found.
+#: Ran successfully: no new slots found (also used by --list-watches / Ctrl-C).
 EXIT_NO_SLOTS = 0
 #: Configuration (or notifier/provider setup) error.
 EXIT_CONFIG_ERROR = 2
