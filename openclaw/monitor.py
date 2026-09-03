@@ -439,9 +439,13 @@ class Monitor:
         if not isinstance(best, dict) or not best.get(watch.label):
             return None
         try:
-            return date.fromisoformat(str(best[watch.label]))
+            result = date.fromisoformat(str(best[watch.label]))
         except ValueError:
             return None
+        if result < self.clock().date():
+            del best[watch.label]
+            return None
+        return result
 
     def _quiet_settings(self, watch: Watch) -> Mapping[str, Any] | None:
         return watch.quiet_hours if watch.quiet_hours is not None else self.config.quiet_hours
@@ -474,23 +478,29 @@ class Monitor:
                 times.append(datetime.fromisoformat(str(raw)))
             except ValueError:
                 continue
+        interval = float(settings.get("interval_seconds", 0))
+        if interval:
+            cutoff = now - timedelta(seconds=interval)
+            times = [sent for sent in times if sent >= cutoff]
+        elif times:
+            times = times[-1:]
+        history[watch.label] = [sent.isoformat() for sent in times]
         gap = float(settings.get("minimum_gap_seconds", 0))
         if gap and times and now - times[-1] < timedelta(seconds=gap):
             return False
         maximum = int(settings.get("max_alerts", 0))
-        interval = float(settings.get("interval_seconds", 0))
         if maximum and interval:
-            cutoff = now - timedelta(seconds=interval)
-            times = [sent for sent in times if sent >= cutoff]
             if len(times) >= maximum:
-                history[watch.label] = [sent.isoformat() for sent in times]
                 return False
         return True
 
     def _mark_dispatched(self, watch: Watch, now: datetime) -> None:
         history = self.state.meta.setdefault("alert_history", {})
         if isinstance(history, dict):
-            history.setdefault(watch.label, []).append(now.isoformat())
+            if self._throttle_settings(watch).get("interval_seconds"):
+                history.setdefault(watch.label, []).append(now.isoformat())
+            else:
+                history[watch.label] = [now.isoformat()]
         self.state.save()
 
     @staticmethod

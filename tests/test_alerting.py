@@ -60,6 +60,20 @@ class ChangeEventTests(unittest.TestCase):
         monitor.config = config([])
         self.assertEqual(monitor.run_once(), [])
 
+    def test_past_best_date_is_replaced(self):
+        current = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
+        monitor = Monitor(
+            config([{"date": "2026-09-10"}], alert_on=["improved"]),
+            [],
+            clock=lambda: current,
+        )
+        monitor.state.meta["best_dates"] = {monitor.config.watches[0].label: "2026-09-02"}
+        monitor.run_once()
+        self.assertEqual(
+            monitor.state.meta["best_dates"][monitor.config.watches[0].label],
+            "2026-09-10",
+        )
+
 
 class DeliveryPolicyTests(unittest.TestCase):
     def test_quiet_alert_is_held_then_delivered(self):
@@ -98,6 +112,8 @@ class DeliveryPolicyTests(unittest.TestCase):
         self.assertEqual(monitor.run_once(), [])
         current[0] = datetime(2026, 9, 3, 12, 1, 1, tzinfo=timezone.utc)
         self.assertEqual(len(monitor.run_once()), 1)
+        history = monitor.state.meta["alert_history"][monitor.config.watches[0].label]
+        self.assertEqual(len(history), 1)
 
 
 class HealthTests(unittest.TestCase):
