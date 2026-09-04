@@ -17,7 +17,15 @@ permissions:
 jobs:
   verify-and-build:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
+      - name: Validate release tag
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::tag must use vX.Y.Z format"
+            exit 1
+          }
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
@@ -56,10 +64,6 @@ jobs:
           path: dist
       - name: Extract release notes
         run: |
-          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-            echo "::error::tag must use vX.Y.Z format"
-            exit 1
-          }
           python - <<'PY'
           import os
           from pathlib import Path
@@ -73,7 +77,9 @@ jobs:
               raise SystemExit(f"CHANGELOG.md has no {heading} section")
           start = changelog.index("\n", start) + 1
           end = changelog.find("\n## [", start)
-          notes = changelog[start:end if end != -1 else None].strip()
+          references = changelog.find("\n[Unreleased]:", start)
+          boundaries = [value for value in (end, references) if value != -1]
+          notes = changelog[start:min(boundaries) if boundaries else None].strip()
           if not notes:
               raise SystemExit(f"{heading} has no release notes")
           Path("/tmp/release-notes.md").write_text(notes + "\n", encoding="utf-8")
