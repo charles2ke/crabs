@@ -52,7 +52,7 @@ jobs:
       # shared restore prefix gives "restore latest, always save".
       - name: Restore seen-slot state
         id: state
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .openclaw
           key: openclaw-state-${{ github.run_id }}
@@ -85,7 +85,7 @@ jobs:
 
       - name: Save seen-slot state
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: .openclaw
           key: openclaw-state-${{ github.run_id }}
