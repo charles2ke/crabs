@@ -11,6 +11,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import Sequence
 
+from . import __version__
 from .auth import redact_url
 from .config import Config, ConfigError, inspect_config, load_config
 from .logging_utils import configure_logging
@@ -38,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="openclaw",
         description="Watch Schengen visa appointment slots and alert on availability.",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--config", "-c", required=True, help="path to a JSON config file")
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument(
