@@ -27,8 +27,8 @@ documented exit codes are a stable contract: they only change incompatibly in a
 new major release.
 
 Tags use `vX.Y.Z`; the shorter `vX` and `vX.Y` forms are also accepted and are
-normalised to `X.Y.0` / `X.0.0` when the release workflow looks up the changelog
-section and checks `pyproject.toml`.
+normalised to `X.0.0` (from `vX`) or `X.Y.0` (from `vX.Y`) when the release
+workflow looks up the changelog section and checks `pyproject.toml`.
 
 To release:
 
