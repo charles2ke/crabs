@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+import re
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -62,6 +63,20 @@ class CliTests(unittest.TestCase):
             main(["--version"])
         self.assertEqual(caught.exception.code, 0)
         self.assertEqual(output.getvalue(), f"openclaw {__version__}\n")
+
+    def test_version_matches_pyproject(self):
+        pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+        declared = re.search(
+            r'(?m)^version = "([^"]+)"$', pyproject.read_text(encoding="utf-8")
+        )
+        self.assertIsNotNone(declared)
+        self.assertRegex(
+            declared.group(1), r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$"
+        )
+        changelog = pyproject.with_name("CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn(f"## [{declared.group(1)}]", changelog)
+        if __version__ != "0+unknown":
+            self.assertEqual(__version__, declared.group(1))
 
     def test_list_watches(self):
         with TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()) as output:

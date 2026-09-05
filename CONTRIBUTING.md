@@ -21,15 +21,34 @@ files, the state-file format, or documented exit codes as breaking changes that
 require a major release. Additive, opt-in functionality is a minor release, and
 backwards-compatible fixes are patch releases.
 
+Version `1.0.0` is the first tagged release, published as the `v1` tag. From
+`1.0.0` onwards the configuration file format, the state-file format, and the
+documented exit codes are a stable contract: they only change incompatibly in a
+new major release.
+
+Tags use `vX.Y.Z`; the shorter `vX` and `vX.Y` forms are also accepted and are
+normalised to `X.0.0` (from `vX`) or `X.Y.0` (from `vX.Y`) when the release
+workflow looks up the changelog section and checks `pyproject.toml`.
+
 To release:
 
 1. Move the relevant entries from `Unreleased` into a dated version section in
    `CHANGELOG.md`.
-2. Bump the version in `pyproject.toml`, then merge the release pull request.
-3. Tag the merge commit `vX.Y.Z` and push the tag.
+2. Bump the version in `pyproject.toml`, then merge the release pull request. The
+   tag must resolve to the same version as `pyproject.toml`, or the workflow fails.
+3. Tag the merge commit `vX.Y.Z` and push the tag. Push a tag rather than creating
+   a release from the GitHub UI: only a tag push (or a `workflow_dispatch` run of
+   `release.yml` for that tag) runs the tests, builds the distributions, and
+   attaches them with the changelog notes.
 4. Wait for the release workflow to pass tests and mypy, build both distributions,
    and publish the GitHub Release.
 5. Verify the release notes, sdist, wheel, and installed `openclaw --version`.
+
+If a release exists with no sdist/wheel and auto-generated notes, it was created
+outside the workflow. Re-run `release.yml` via `workflow_dispatch` with that tag;
+the workflow updates the existing release in place, uploading the distributions
+and replacing the notes with the changelog section. The tag itself does not need
+to be deleted or moved.
 
 State files are backwards compatible. PR #5 added appointment dates and pruning;
 PR #6 added health tracking, queued alerts, and throttle state. New releases may
