@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing vX.Y.Z tag to release
+        description: Existing vX, vX.Y, or vX.Y.Z tag to release
         required: true
         type: string
 
@@ -22,8 +22,8 @@ jobs:
     steps:
       - name: Validate release tag
         run: |
-          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-            echo "::error::tag must use vX.Y.Z format"
+          [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+){0,2}$ ]] || {
+            echo "::error::tag must use vX, vX.Y, or vX.Y.Z format"
             exit 1
           }
       - uses: actions/checkout@v7
@@ -66,9 +66,19 @@ jobs:
         run: |
           python - <<'PY'
           import os
+          import re
           from pathlib import Path
 
-          version = os.environ["TAG"].removeprefix("v")
+          parts = os.environ["TAG"].removeprefix("v").split(".")
+          version = ".".join(parts + ["0"] * (3 - len(parts)))
+          project = Path("pyproject.toml").read_text(encoding="utf-8")
+          match = re.search(r'(?m)^version = "([^"]+)"$', project)
+          if match is None:
+              raise SystemExit("pyproject.toml has no version")
+          if match.group(1) != version:
+              raise SystemExit(
+                  f"tag resolves to {version} but pyproject.toml declares {match.group(1)}"
+              )
           changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
           heading = f"## [{version}]"
           try:

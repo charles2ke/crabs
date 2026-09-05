@@ -5,7 +5,11 @@ format. This project follows semantic versioning.
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-09-04
+## [1.0.0] - 2026-09-04
+
+First tagged release, published as `v1`. It supersedes the never-tagged `0.2.0`
+version number and declares the configuration, state-file, and exit-code contract
+stable.
 
 ### Added
 - Configurable slot disappearance and improvement events, timezone-aware quiet
@@ -38,6 +42,6 @@ format. This project follows semantic versioning.
 - PR #4: Telegram notifier with safe formatting, splitting, redaction, and bounded 429 retry.
 - PR #5: scheduled execution, locking, atomic state, pruning, bootstrap, and cron exit codes.
 
-[Unreleased]: https://github.com/charles2ke/crabs/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/charles2ke/crabs/compare/v0.1.0...v0.2.0
+[Unreleased]: https://github.com/charles2ke/crabs/compare/v1...HEAD
+[1.0.0]: https://github.com/charles2ke/crabs/compare/v0.1.0...v1
 [0.1.0]: https://github.com/charles2ke/crabs/releases/tag/v0.1.0
