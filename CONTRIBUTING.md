@@ -14,6 +14,27 @@ Tests must be fully offline. Never add live credentials, portal traffic, booking
 automation, seat holds, CAPTCHA/WAF/rate-limit bypasses, or undocumented
 authentication workarounds.
 
+## Releasing
+
+Open Claw follows semantic versioning. Treat incompatible changes to configuration
+files, the state-file format, or documented exit codes as breaking changes that
+require a major release. Additive, opt-in functionality is a minor release, and
+backwards-compatible fixes are patch releases.
+
+To release:
+
+1. Move the relevant entries from `Unreleased` into a dated version section in
+   `CHANGELOG.md`.
+2. Bump the version in `pyproject.toml`, then merge the release pull request.
+3. Tag the merge commit `vX.Y.Z` and push the tag.
+4. Wait for the release workflow to pass tests and mypy, build both distributions,
+   and publish the GitHub Release.
+5. Verify the release notes, sdist, wheel, and installed `openclaw --version`.
+
+State files are backwards compatible. PR #5 added appointment dates and pruning;
+PR #6 added health tracking, queued alerts, and throttle state. New releases may
+add state fields, but must continue loading older list and flat-object formats.
+
 ## Providers
 
 Subclass `Provider`, return typed `Slot` values, and register the factory in the

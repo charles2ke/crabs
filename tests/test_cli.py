@@ -10,6 +10,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from openclaw import __version__
 from openclaw.cli import EXIT_CONFIG_ERROR, EXIT_NO_SLOTS, build_parser, main
 
 
@@ -54,6 +55,13 @@ class CliTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 0)
         self.assertIn("--validate-config", output.getvalue())
         self.assertIn("--log-format", output.getvalue())
+
+    def test_version_output(self):
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaises(SystemExit) as caught:
+            main(["--version"])
+        self.assertEqual(caught.exception.code, 0)
+        self.assertEqual(output.getvalue(), f"openclaw {__version__}\n")
 
     def test_list_watches(self):
         with TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()) as output:

@@ -51,14 +51,14 @@ python -m openclaw --config config.json --stats
 
 ## Documentation
 
-- [Configuration and CLI](docs/configuration.md)
-- [Provider and authentication reference](docs/providers.md)
-- [Notifier reference](docs/notifiers.md)
-- [Scheduling with Actions, cron, or systemd](docs/scheduling.md)
-- [Security and responsible use](docs/security.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security policy](SECURITY.md)
-- [Changelog](CHANGELOG.md)
+- [Configuration and CLI](https://github.com/charles2ke/crabs/blob/main/docs/configuration.md)
+- [Provider and authentication reference](https://github.com/charles2ke/crabs/blob/main/docs/providers.md)
+- [Notifier reference](https://github.com/charles2ke/crabs/blob/main/docs/notifiers.md)
+- [Scheduling with Actions, cron, or systemd](https://github.com/charles2ke/crabs/blob/main/docs/scheduling.md)
+- [Security and responsible use](https://github.com/charles2ke/crabs/blob/main/docs/security.md)
+- [Contributing](https://github.com/charles2ke/crabs/blob/main/CONTRIBUTING.md)
+- [Security policy](https://github.com/charles2ke/crabs/blob/main/SECURITY.md)
+- [Changelog](https://github.com/charles2ke/crabs/blob/main/CHANGELOG.md)
 
 ## Development
 
