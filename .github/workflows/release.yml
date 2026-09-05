@@ -57,7 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
       - uses: actions/download-artifact@v5
         with:
           name: distributions
@@ -69,15 +69,17 @@ jobs:
           import re
           from pathlib import Path
 
-          parts = os.environ["TAG"].removeprefix("v").split(".")
-          version = ".".join(parts + ["0"] * (3 - len(parts)))
+          tag = os.environ["TAG"]
+          parts = tag.removeprefix("v").split(".")
           project = Path("pyproject.toml").read_text(encoding="utf-8")
           match = re.search(r'(?m)^version = "([^"]+)"$', project)
           if match is None:
               raise SystemExit("pyproject.toml has no version")
-          if match.group(1) != version:
+          version = match.group(1)
+          if version.split(".")[: len(parts)] != parts:
               raise SystemExit(
-                  f"tag resolves to {version} but pyproject.toml declares {match.group(1)}"
+                  f"tag {tag} does not match pyproject.toml version {version}; "
+                  "the tag probably points at a commit from before the version bump"
               )
           changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
           heading = f"## [{version}]"

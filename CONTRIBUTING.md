@@ -27,8 +27,10 @@ documented exit codes are a stable contract: they only change incompatibly in a
 new major release.
 
 Tags use `vX.Y.Z`; the shorter `vX` and `vX.Y` forms are also accepted and are
-normalised to `X.0.0` (from `vX`) or `X.Y.0` (from `vX.Y`) when the release
-workflow looks up the changelog section and checks `pyproject.toml`.
+matched as prefixes of the version in `pyproject.toml`, so `v1` releases whatever
+`1.Y.Z` version the tagged commit declares and `v1.2` releases its `1.2.Z`
+version. The release workflow uses that resolved version to look up the changelog
+section.
 
 To release:
 
@@ -49,6 +51,11 @@ outside the workflow. Re-run `release.yml` via `workflow_dispatch` with that tag
 the workflow updates the existing release in place, uploading the distributions
 and replacing the notes with the changelog section. The tag itself does not need
 to be deleted or moved.
+
+If the workflow fails with `tag ... does not match pyproject.toml version ...`,
+the tag points at a commit from before the version bump. Move the tag onto the
+merge commit that declares the released version (`git tag -f vX <sha>` and
+`git push --force origin vX`) and re-run `release.yml` for it.
 
 State files are backwards compatible. PR #5 added appointment dates and pruning;
 PR #6 added health tracking, queued alerts, and throttle state. New releases may
