@@ -70,7 +70,9 @@ class CliTests(unittest.TestCase):
             r'(?m)^version = "([^"]+)"$', pyproject.read_text(encoding="utf-8")
         )
         self.assertIsNotNone(declared)
-        self.assertEqual(declared.group(1), "1.0.0")
+        self.assertRegex(declared.group(1), r"^\d+\.\d+\.\d+$")
+        changelog = pyproject.with_name("CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn(f"## [{declared.group(1)}]", changelog)
         if __version__ != "0+unknown":
             self.assertEqual(__version__, declared.group(1))
 
