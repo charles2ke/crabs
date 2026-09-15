@@ -12,13 +12,10 @@ from openclaw.monitor import Monitor, SeenStore, in_window
 from openclaw.notifiers import ConsoleNotifier, FileNotifier, NotifierError, build_notifier
 
 
-# Slot dates are relative to today so the suite cannot rot: slots in the past
-# are pruned from the seen store as expired and would alert again every cycle.
-TODAY = date.today()
-SOON = TODAY + timedelta(days=7)
-LATER = TODAY + timedelta(days=13)
-PAST = TODAY - timedelta(days=30)
-FAR = TODAY + timedelta(days=365)
+#: Slot dates are kept in the future so pruning of past appointments (which
+#: is keyed off today's date) cannot make these tests fail as time passes.
+SOON = date.today() + timedelta(days=30)
+LATER = SOON + timedelta(days=6)
 
 
 def make_config(slots, **overrides):
@@ -83,9 +80,13 @@ class MonitorTests(unittest.TestCase):
 
     def test_date_window_filtering(self):
         config = make_config(
-            [{"date": PAST.isoformat()}, {"date": SOON.isoformat()}, {"date": FAR.isoformat()}],
-            earliest=TODAY.isoformat(),
-            latest=(TODAY + timedelta(days=60)).isoformat(),
+            [
+                {"date": (SOON - timedelta(days=10)).isoformat()},
+                {"date": SOON.isoformat()},
+                {"date": (LATER + timedelta(days=10)).isoformat()},
+            ],
+            earliest=(SOON - timedelta(days=1)).isoformat(),
+            latest=LATER.isoformat(),
         )
         monitor = Monitor(config, notifiers=[], sleeper=lambda _: None)
         slots = monitor.check_watch(config.watches[0])
