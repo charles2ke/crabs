@@ -539,7 +539,10 @@ class EmailNotifier(Notifier):
         if use_tls is None:
             use_tls = not use_ssl
         elif use_tls and use_ssl:
-            raise NotifierError("email notifier cannot use both 'use_tls' and 'use_ssl'")
+            raise NotifierError(
+                "email notifier cannot enable both 'use_tls' (STARTTLS) and "
+                "'use_ssl' (implicit TLS); set only one"
+            )
         if (username and not password) or (password and not username):
             raise NotifierError("email notifier requires both 'username' and 'password'")
         try:
@@ -642,7 +645,11 @@ def build_notifier(spec: Mapping[str, Any]) -> Notifier:
             port=spec.get("port", 587),
             username=_optional_str(spec.get("username")),
             password=_optional_str(spec.get("password")),
-            use_tls=bool(spec["use_tls"]) if "use_tls" in spec else None,
+            use_tls=(
+                bool(spec["use_tls"])
+                if "use_tls" in spec and spec["use_tls"] is not None
+                else None
+            ),
             use_ssl=bool(spec.get("use_ssl", False)),
             subject_prefix=str(spec.get("subject_prefix", "[Open Claw]")),
             timeout=spec.get("timeout", DEFAULT_TIMEOUT),

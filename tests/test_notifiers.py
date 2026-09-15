@@ -299,18 +299,20 @@ class BuildNotifierTests(unittest.TestCase):
         self.assertEqual(email.recipients, ("applicant@example.invalid",))
 
     def test_build_email_use_ssl_disables_starttls_by_default(self):
-        email = build_notifier(
-            {
-                "type": "email",
-                "host": "smtp.invalid",
-                "sender": "openclaw@example.invalid",
-                "recipients": "applicant@example.invalid",
-                "use_ssl": True,
-            }
-        )
-        self.assertIsInstance(email, EmailNotifier)
-        self.assertTrue(email.use_ssl)
-        self.assertFalse(email.use_tls)
+        for spec in ({"use_ssl": True}, {"use_ssl": True, "use_tls": None}):
+            with self.subTest(spec=spec):
+                email = build_notifier(
+                    {
+                        "type": "email",
+                        "host": "smtp.invalid",
+                        "sender": "openclaw@example.invalid",
+                        "recipients": "applicant@example.invalid",
+                        **spec,
+                    }
+                )
+                self.assertIsInstance(email, EmailNotifier)
+                self.assertTrue(email.use_ssl)
+                self.assertFalse(email.use_tls)
 
     def test_rejects_incomplete_specs(self):
         for spec in (
