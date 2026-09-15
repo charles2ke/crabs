@@ -638,6 +638,7 @@ def build_notifier(spec: Mapping[str, Any]) -> Notifier:
             recipients = [recipients]
         if recipients is not None and not isinstance(recipients, list):
             raise NotifierError("email notifier 'recipients' must be a list of addresses")
+        raw_use_tls = spec.get("use_tls")
         return EmailNotifier(
             str(spec.get("host") or ""),
             recipients or [],
@@ -645,11 +646,7 @@ def build_notifier(spec: Mapping[str, Any]) -> Notifier:
             port=spec.get("port", 587),
             username=_optional_str(spec.get("username")),
             password=_optional_str(spec.get("password")),
-            use_tls=(
-                bool(spec["use_tls"])
-                if "use_tls" in spec and spec["use_tls"] is not None
-                else None
-            ),
+            use_tls=None if raw_use_tls is None else bool(raw_use_tls),
             use_ssl=bool(spec.get("use_ssl", False)),
             subject_prefix=str(spec.get("subject_prefix", "[Open Claw]")),
             timeout=spec.get("timeout", DEFAULT_TIMEOUT),

@@ -12,6 +12,8 @@ format. This project follows semantic versioning.
   `examples/dublin_email.json`.
 - Config validation requiring `${ENV_VAR}` placeholders for Slack and Discord
   webhook URLs and SMTP credentials.
+- Email `use_ssl: true` now selects implicit TLS without also enabling STARTTLS;
+  explicitly setting both `use_ssl` and `use_tls` remains invalid.
 
 ## [1.0.0] - 2026-09-04
 
