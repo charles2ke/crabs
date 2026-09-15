@@ -507,7 +507,9 @@ class DiscordNotifier(Notifier):
 class EmailNotifier(Notifier):
     """Send alerts as plain-text email through an SMTP server.
 
-    ``use_tls=None`` auto-enables STARTTLS unless ``use_ssl`` selects implicit TLS.
+    ``use_tls=None`` means use STARTTLS unless ``use_ssl`` selects implicit TLS.
+    Passing ``use_tls=True`` with ``use_ssl=True`` still raises because the two
+    TLS modes are mutually exclusive.
     """
 
     name = "email"
