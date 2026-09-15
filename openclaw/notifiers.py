@@ -5,6 +5,7 @@ from __future__ import annotations
 import abc
 import html
 import json
+import math
 import re
 import smtplib
 import sys
@@ -47,7 +48,7 @@ def _validate_timeout(timeout: Any, label: str) -> float:
         value = float(timeout)
     except (TypeError, ValueError) as exc:
         raise NotifierError(f"invalid {label} timeout: {exc}") from exc
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         raise NotifierError(f"{label} timeout must be greater than 0")
     return value
 
@@ -406,8 +407,12 @@ class SlackNotifier(Notifier):
 
     def send(self, alert: Alert) -> None:
         summary = self._summary(alert)
+        lines = []
+        if alert.message:
+            lines.append(alert.message)
+        lines.extend(self._format_slot(slot) for slot in alert.slots)
         body = _fit_lines(
-            f"*{summary}*", [self._format_slot(slot) for slot in alert.slots],
+            f"*{summary}*", lines,
             SLACK_BLOCK_TEXT_LIMIT,
         )
         payload: dict[str, Any] = {
@@ -513,7 +518,7 @@ class EmailNotifier(Notifier):
         port: int = 587,
         username: str | None = None,
         password: str | None = None,
-        use_tls: bool = True,
+        use_tls: bool | None = None,
         use_ssl: bool = False,
         subject_prefix: str = "[Open Claw]",
         timeout: float = DEFAULT_TIMEOUT,
@@ -526,7 +531,9 @@ class EmailNotifier(Notifier):
             raise NotifierError("email notifier requires at least one recipient")
         if not sender:
             raise NotifierError("email notifier requires a 'sender'")
-        if use_tls and use_ssl:
+        if use_tls is None:
+            use_tls = not use_ssl
+        elif use_tls and use_ssl:
             raise NotifierError("email notifier cannot use both 'use_tls' and 'use_ssl'")
         if (username and not password) or (password and not username):
             raise NotifierError("email notifier requires both 'username' and 'password'")
@@ -630,7 +637,7 @@ def build_notifier(spec: Mapping[str, Any]) -> Notifier:
             port=spec.get("port", 587),
             username=_optional_str(spec.get("username")),
             password=_optional_str(spec.get("password")),
-            use_tls=bool(spec.get("use_tls", True)),
+            use_tls=bool(spec["use_tls"]) if "use_tls" in spec else None,
             use_ssl=bool(spec.get("use_ssl", False)),
             subject_prefix=str(spec.get("subject_prefix", "[Open Claw]")),
             timeout=spec.get("timeout", DEFAULT_TIMEOUT),

@@ -133,6 +133,7 @@ class SlackNotifierTests(unittest.TestCase):
             SlackNotifier("https://hooks.slack.invalid/x").send(alert)
         payload = json.loads(urlopen.call_args.args[0].data)
         self.assertIn("Provider health warning", payload["text"])
+        self.assertIn("provider is stale", payload["blocks"][0]["text"]["text"])
 
     def test_long_digests_are_truncated_within_block_limit(self):
         watch = Watch("IE", "FR", "Dublin")
@@ -152,8 +153,9 @@ class SlackNotifierTests(unittest.TestCase):
     def test_rejects_bad_url_and_timeout(self):
         with self.assertRaises(NotifierError):
             SlackNotifier("ftp://hooks.slack.invalid/x")
-        with self.assertRaises(NotifierError):
-            SlackNotifier("https://hooks.slack.invalid/x", timeout=0)
+        for timeout in (0, float("nan"), float("inf"), float("-inf")):
+            with self.subTest(timeout=timeout), self.assertRaises(NotifierError):
+                SlackNotifier("https://hooks.slack.invalid/x", timeout=timeout)
 
     def test_delivery_failure_is_wrapped(self):
         with patch("urllib.request.urlopen", return_value=FakeResponse(500)):
@@ -239,11 +241,25 @@ class EmailNotifierTests(unittest.TestCase):
         with self.assertRaises(NotifierError):
             EmailNotifier("smtp.invalid", [], **base)
         with self.assertRaises(NotifierError):
-            EmailNotifier("smtp.invalid", ["a@b.invalid"], use_ssl=True, **base)
+            EmailNotifier("smtp.invalid", ["a@b.invalid"], use_ssl=True, use_tls=True, **base)
         with self.assertRaises(NotifierError):
             EmailNotifier("smtp.invalid", ["a@b.invalid"], username="u", **base)
         with self.assertRaises(NotifierError):
             EmailNotifier("smtp.invalid", ["a@b.invalid"], port=0, **base)
+
+    def test_use_ssl_disables_starttls_by_default(self):
+        notifier = EmailNotifier(
+            "smtp.invalid",
+            ["applicant@example.invalid"],
+            sender="openclaw@example.invalid",
+            use_ssl=True,
+            smtp_factory=FakeSMTP,
+        )
+        notifier.send(make_alert())
+        client = FakeSMTP.instances[0]
+        self.assertFalse(client.started_tls)
+        self.assertTrue(notifier.use_ssl)
+        self.assertFalse(notifier.use_tls)
 
     def test_smtp_failure_is_wrapped(self):
         class FailingSMTP(FakeSMTP):
@@ -281,6 +297,20 @@ class BuildNotifierTests(unittest.TestCase):
         self.assertIsInstance(discord, DiscordNotifier)
         self.assertIsInstance(email, EmailNotifier)
         self.assertEqual(email.recipients, ("applicant@example.invalid",))
+
+    def test_build_email_use_ssl_disables_starttls_by_default(self):
+        email = build_notifier(
+            {
+                "type": "email",
+                "host": "smtp.invalid",
+                "sender": "openclaw@example.invalid",
+                "recipients": "applicant@example.invalid",
+                "use_ssl": True,
+            }
+        )
+        self.assertIsInstance(email, EmailNotifier)
+        self.assertTrue(email.use_ssl)
+        self.assertFalse(email.use_tls)
 
     def test_rejects_incomplete_specs(self):
         for spec in (
