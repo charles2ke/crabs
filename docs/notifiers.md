@@ -83,8 +83,10 @@ description lists the slots with Markdown booking links, truncated to the
 ## Email
 
 Any SMTP server works, including provider app passwords. STARTTLS is used by
-default on port 587; set `use_ssl` for implicit TLS (usually port 465) and
-`use_tls` to `false` only for a trusted local relay.
+default on port 587; set `use_ssl` for implicit TLS (usually port 465), which
+disables STARTTLS when `use_tls` is omitted or `null`. Do not set both
+`use_ssl` and `use_tls` to `true`. Set `use_tls` to `false` with `use_ssl` set
+to `false` only for a trusted local relay, because that sends plaintext SMTP.
 
 ```json
 {"type": "email", "host": "smtp.example.com", "port": 587, "use_tls": true,
