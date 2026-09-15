@@ -407,7 +407,7 @@ class SlackNotifier(Notifier):
 
     def send(self, alert: Alert) -> None:
         summary = self._summary(alert)
-        lines = []
+        lines: list[str] = []
         if alert.message:
             lines.append(alert.message)
         lines.extend(self._format_slot(slot) for slot in alert.slots)
@@ -505,7 +505,10 @@ class DiscordNotifier(Notifier):
 
 
 class EmailNotifier(Notifier):
-    """Send alerts as plain-text email through an SMTP server."""
+    """Send alerts as plain-text email through an SMTP server.
+
+    ``use_tls=None`` auto-enables STARTTLS unless ``use_ssl`` selects implicit TLS.
+    """
 
     name = "email"
 
