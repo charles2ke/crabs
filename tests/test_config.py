@@ -168,6 +168,22 @@ class ConfigTests(unittest.TestCase):
                     ],
                 }
             )
+        for value in (123, ["${OPENCLAW_SMTP_PASSWORD}"], {"env": "OPENCLAW_SMTP_PASSWORD"}):
+            with self.subTest(value=value), self.assertRaisesRegex(ConfigError, "email " + PW):
+                parse_config(
+                    {
+                        **BASE,
+                        "notifiers": [
+                            {
+                                "type": "email",
+                                "host": "smtp.invalid",
+                                "sender": "a@b.invalid",
+                                "recipients": ["c@d.invalid"],
+                                PW: value,
+                            }
+                        ],
+                    }
+                )
 
     def test_load_integration_examples(self):
         import os

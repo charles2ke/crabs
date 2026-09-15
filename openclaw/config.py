@@ -172,7 +172,10 @@ def _validate_notifier_secrets(notifiers: Any) -> None:
             for key in ("host", "sender", "recipients"):
                 if not spec.get(key):
                     raise ConfigError(f"email notifier requires '{key}'")
-            _require_env_secret(spec.get("password"), "email password")
+            password = spec.get("password")
+            if password not in (None, "") and not isinstance(password, str):
+                raise ConfigError("email password must use a ${ENV_VAR} placeholder")
+            _require_env_secret(password, "email password")
 
 
 def _parse_clock(raw: Any, label: str) -> None:
