@@ -261,6 +261,21 @@ class EmailNotifierTests(unittest.TestCase):
         self.assertTrue(notifier.use_ssl)
         self.assertFalse(notifier.use_tls)
 
+    def test_explicit_plaintext_disables_starttls(self):
+        notifier = EmailNotifier(
+            "smtp.invalid",
+            ["applicant@example.invalid"],
+            sender="openclaw@example.invalid",
+            use_tls=False,
+            use_ssl=False,
+            smtp_factory=FakeSMTP,
+        )
+        notifier.send(make_alert())
+        client = FakeSMTP.instances[0]
+        self.assertFalse(client.started_tls)
+        self.assertFalse(notifier.use_ssl)
+        self.assertFalse(notifier.use_tls)
+
     def test_smtp_failure_is_wrapped(self):
         class FailingSMTP(FakeSMTP):
             def send_message(self, message):
