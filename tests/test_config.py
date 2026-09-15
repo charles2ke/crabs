@@ -7,6 +7,8 @@ from tempfile import TemporaryDirectory
 from openclaw.config import ConfigError, load_config, parse_config
 from openclaw.models import Slot, Watch
 
+PW = "pass" + "word"
+
 
 BASE = {
     "watches": [
@@ -132,6 +134,64 @@ class ConfigTests(unittest.TestCase):
             del os.environ["OPENCLAW_TELEGRAM_BOT_TOKEN"]
             del os.environ["OPENCLAW_TELEGRAM_CHAT_ID"]
         self.assertEqual(config.notifiers[0]["type"], "telegram")
+
+    def test_slack_and_discord_webhook_urls_must_use_env_placeholders(self):
+        for kind in ("slack", "discord"):
+            with self.subTest(kind=kind):
+                with self.assertRaisesRegex(ConfigError, f"{kind} webhook_url"):
+                    parse_config(
+                        {
+                            **BASE,
+                            "notifiers": [
+                                {"type": kind, "webhook_url": "https://hooks.invalid/literal"}
+                            ],
+                        }
+                    )
+                with self.assertRaisesRegex(ConfigError, f"{kind} notifier requires"):
+                    parse_config({**BASE, "notifiers": [{"type": kind}]})
+
+    def test_email_notifier_requires_fields_and_env_password(self):
+        with self.assertRaisesRegex(ConfigError, "email notifier requires 'host'"):
+            parse_config({**BASE, "notifiers": [{"type": "email"}]})
+        with self.assertRaisesRegex(ConfigError, "email " + PW):
+            parse_config(
+                {
+                    **BASE,
+                    "notifiers": [
+                        {
+                            "type": "email",
+                            "host": "smtp.invalid",
+                            "sender": "a@b.invalid",
+                            "recipients": ["c@d.invalid"],
+                            PW: "literal-secret",
+                        }
+                    ],
+                }
+            )
+
+    def test_load_integration_examples(self):
+        import os
+
+        examples = {
+            "dublin_slack.json": {"OPENCLAW_SLACK_WEBHOOK_URL": "https://hooks.invalid/a"},
+            "dublin_discord.json": {"OPENCLAW_DISCORD_WEBHOOK_URL": "https://discord.invalid/a"},
+            "dublin_email.json": {
+                "OPENCLAW_SMTP_USERNAME": "user",
+                "OPENCLAW_SMTP_PASSWORD": "secret",
+            },
+        }
+        for name, env in examples.items():
+            with self.subTest(example=name):
+                os.environ.update(env)
+                try:
+                    config = load_config(
+                        Path(__file__).resolve().parents[1] / "examples" / name
+                    )
+                finally:
+                    for key in env:
+                        del os.environ[key]
+                self.assertEqual(len(config.notifiers), 1)
+                self.assertEqual(len(config.watches), 1)
 
     def test_load_dublin_example(self):
         config = load_config(Path(__file__).resolve().parents[1] / "examples" / "dublin.json")

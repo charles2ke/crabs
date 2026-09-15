@@ -11,7 +11,16 @@ from .config import Config, ConfigError, load_config, parse_config
 from .locking import FileLock, LockError
 from .models import Alert, Slot, Watch
 from .monitor import Monitor, SeenStore
-from .notifiers import ConsoleNotifier, FileNotifier, Notifier, NotifierError, WebhookNotifier
+from .notifiers import (
+    ConsoleNotifier,
+    DiscordNotifier,
+    EmailNotifier,
+    FileNotifier,
+    Notifier,
+    NotifierError,
+    SlackNotifier,
+    WebhookNotifier,
+)
 from .providers import AuthenticationError, Provider, ProviderError, get_provider, register_provider
 
 __all__ = [
@@ -20,6 +29,8 @@ __all__ = [
     "Config",
     "ConfigError",
     "ConsoleNotifier",
+    "DiscordNotifier",
+    "EmailNotifier",
     "FileLock",
     "FileNotifier",
     "LockError",
@@ -29,6 +40,7 @@ __all__ = [
     "Provider",
     "ProviderError",
     "SeenStore",
+    "SlackNotifier",
     "Slot",
     "Watch",
     "WebhookNotifier",
