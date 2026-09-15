@@ -72,9 +72,9 @@ jobs:
           BOOTSTRAP: ${{ (steps.state.outputs.cache-matched-key == '' || inputs.bootstrap) && '--bootstrap' || '' }}
         run: |
           set -uo pipefail
+          code=0
           python -m openclaw --config "$OPENCLAW_CONFIG" --once \
-            --state "$OPENCLAW_STATE" --lock-timeout 30 $BOOTSTRAP
-          code=$?
+            --state "$OPENCLAW_STATE" --lock-timeout 30 $BOOTSTRAP || code=$?
           case "$code" in
             0)  echo "::notice::no new slots" ;;
             10) echo "::notice::new slots found and alerts dispatched" ;;
