@@ -5,6 +5,18 @@ format. This project follows semantic versioning.
 
 ## [Unreleased]
 
+### Added
+- Real-world alert integrations: Slack incoming webhooks (Block Kit), Discord
+  webhooks (embeds), and plain-text email over SMTP, with example configs at
+  `examples/dublin_slack.json`, `examples/dublin_discord.json`, and
+  `examples/dublin_email.json`.
+- Config validation requiring `${ENV_VAR}` placeholders for Slack and Discord
+  webhook URLs and SMTP credentials.
+
+### Changed
+- Email `use_ssl: true` now selects implicit TLS without also enabling STARTTLS;
+  explicitly setting both `use_ssl` and `use_tls` remains invalid.
+
 ## [1.0.0] - 2026-09-04
 
 First tagged release, published as `v1`. It supersedes the never-tagged `0.2.0`

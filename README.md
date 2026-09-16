@@ -13,7 +13,8 @@ appointments and does not bypass authentication, CAPTCHA, WAF, or rate limits.
 
 - Multiple watches and stdlib-only provider adapters (`mock`, `http-json`,
   `vfs-global`, `tlscontact`, and `bls-international`).
-- Console, JSON Lines, webhook, and Telegram notifications.
+- Console, JSON Lines, webhook, Telegram, Slack, Discord, and email (SMTP)
+  notifications.
 - Opt-in new, disappeared, improved, and provider-health alerts.
 - Persistent atomic state, cross-process locking, date-window filtering, quiet
   hours, throttling, and cron-safe one-shot execution.

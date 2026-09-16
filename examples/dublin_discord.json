@@ -1,0 +1,43 @@
+{
+  "metadata": {
+    "name": "Dublin Schengen slot watch with Discord alerts",
+    "notes": "Offline example using the mock provider. The Discord webhook URL is read from the environment."
+  },
+  "poll_interval": 600,
+  "jitter": 120,
+  "earliest": "2026-09-01",
+  "latest": "2027-03-31",
+  "state_file": ".openclaw/dublin-discord-state.json",
+  "notifiers": [
+    {
+      "type": "discord",
+      "webhook_url": "${OPENCLAW_DISCORD_WEBHOOK_URL}",
+      "username": "Open Claw"
+    }
+  ],
+  "watches": [
+    {
+      "country_from": "IE",
+      "country_to": "FR",
+      "city": "Dublin",
+      "visa_category": "short-stay",
+      "provider": "mock",
+      "options": {
+        "slots": [
+          {
+            "date": "2026-09-14",
+            "time": "09:20",
+            "seats": 2,
+            "booking_url": "https://example.invalid/dublin/fr/book"
+          },
+          {
+            "date": "2026-10-02",
+            "time": "11:00",
+            "seats": 1,
+            "booking_url": "https://example.invalid/dublin/fr/book"
+          }
+        ]
+      }
+    }
+  ]
+}

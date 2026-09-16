@@ -157,13 +157,27 @@ def _validate_notifier_secrets(notifiers: Any) -> None:
     for spec in notifiers:
         if not isinstance(spec, Mapping):
             continue
-        if str(spec.get("type", "console")).lower() != "telegram":
-            continue
-        if not spec.get("bot_token"):
-            raise ConfigError("telegram notifier requires 'bot_token'")
-        if not spec.get("chat_id"):
-            raise ConfigError("telegram notifier requires 'chat_id'")
-        _require_env_secret(spec.get("bot_token"), "telegram bot_token")
+        kind = str(spec.get("type", "console")).lower()
+        if kind == "telegram":
+            if not spec.get("bot_token"):
+                raise ConfigError("telegram notifier requires 'bot_token'")
+            if not spec.get("chat_id"):
+                raise ConfigError("telegram notifier requires 'chat_id'")
+            _require_env_secret(spec.get("bot_token"), "telegram bot_token")
+        elif kind in {"slack", "discord"}:
+            if not spec.get("webhook_url"):
+                raise ConfigError(f"{kind} notifier requires 'webhook_url'")
+            _require_env_secret(spec.get("webhook_url"), f"{kind} webhook_url")
+        elif kind == "email":
+            for key in ("host", "sender", "recipients"):
+                if not spec.get(key):
+                    raise ConfigError(f"email notifier requires '{key}'")
+            password = spec.get("password")
+            if password is not None and not isinstance(password, str):
+                raise ConfigError(
+                    "email password must be a string containing a ${ENV_VAR} placeholder"
+                )
+            _require_env_secret(password, "email password")
 
 
 def _parse_clock(raw: Any, label: str) -> None:
