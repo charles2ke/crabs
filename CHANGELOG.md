@@ -5,6 +5,8 @@ format. This project follows semantic versioning.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-18
+
 ### Added
 - Real-world alert integrations: Slack incoming webhooks (Block Kit), Discord
   webhooks (embeds), and plain-text email over SMTP, with example configs at
@@ -54,6 +56,7 @@ stable.
 - PR #4: Telegram notifier with safe formatting, splitting, redaction, and bounded 429 retry.
 - PR #5: scheduled execution, locking, atomic state, pruning, bootstrap, and cron exit codes.
 
-[Unreleased]: https://github.com/charles2ke/crabs/compare/v1...HEAD
+[Unreleased]: https://github.com/charles2ke/crabs/compare/v1.1...HEAD
+[1.1.0]: https://github.com/charles2ke/crabs/compare/v1...v1.1
 [1.0.0]: https://github.com/charles2ke/crabs/compare/v0.1.0...v1
 [0.1.0]: https://github.com/charles2ke/crabs/releases/tag/v0.1.0
