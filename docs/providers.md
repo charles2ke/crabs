@@ -61,7 +61,9 @@ variables.
 ```
 
 Adapters reject sign-in pages, malformed payloads, and CAPTCHA/anti-bot gates.
-They do not circumvent controls. Confirm portal terms and local law and stop
+They do not circumvent controls. A detected CAPTCHA, anti-bot, or WAF challenge
+raises `ChallengeError` and is reported as a provider-health warning so an
+operator can intervene manually. Confirm portal terms and local law and stop
 polling when requested.
 
 ## Adding a provider

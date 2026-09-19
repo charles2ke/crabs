@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from .config import Config
 from .models import Alert, Slot, Watch
 from .notifiers import Notifier, NotifierError, build_notifier
-from .providers import ProviderError, get_provider
+from .providers import ChallengeError, ProviderError, get_provider
 from .providers.base import Provider
 
 LOGGER = logging.getLogger("openclaw")
@@ -234,14 +234,20 @@ class Monitor:
             try:
                 slots = self.check_watch(watch)
             except ProviderError as exc:
+                challenge = isinstance(exc, ChallengeError)
                 LOGGER.warning(
                     "watch %s failed: %s",
                     watch.label,
                     exc,
-                    extra={"event": "provider_error", "watch": watch.label},
+                    extra={
+                        "event": "provider_challenge" if challenge else "provider_error",
+                        "watch": watch.label,
+                    },
                 )
                 failed_watch_labels.append(watch.label)
-                warning = self._record_health(watch, now, error=True)
+                warning = self._record_health(
+                    watch, now, error=True, challenge=challenge
+                )
                 if warning:
                     self._deliver_or_hold(warning, alerts)
                 continue
@@ -336,6 +342,7 @@ class Monitor:
         *,
         slots: Sequence[Slot] = (),
         error: bool = False,
+        challenge: bool = False,
     ) -> Alert | None:
         records = self._health_records()
         record = records.setdefault(
@@ -343,21 +350,36 @@ class Monitor:
             {
                 "consecutive_empty": 0,
                 "consecutive_errors": 0,
+                "consecutive_challenges": 0,
                 "successes": 0,
                 "failures": 0,
+                "challenges": 0,
                 "slots_seen": 0,
                 "first_observed": now.isoformat(),
                 "warning_active": False,
+                "challenge_warning_active": False,
             },
         )
         if error:
             record["consecutive_errors"] = int(record.get("consecutive_errors", 0)) + 1
             record["failures"] = int(record.get("failures", 0)) + 1
+            if challenge:
+                record["consecutive_challenges"] = (
+                    int(record.get("consecutive_challenges", 0)) + 1
+                )
+                record["challenges"] = int(record.get("challenges", 0)) + 1
+                record["last_challenge"] = now.isoformat()
+            else:
+                record["consecutive_challenges"] = 0
         else:
             record["consecutive_errors"] = 0
+            record["consecutive_challenges"] = 0
             record["successes"] = int(record.get("successes", 0)) + 1
             record["last_success"] = now.isoformat()
             record["slots_seen"] = int(record.get("slots_seen", 0)) + len(slots)
+            if record.get("challenge_warning_active"):
+                record["warning_active"] = False
+                record["challenge_warning_active"] = False
             if slots:
                 record["consecutive_empty"] = 0
                 record["last_slots_seen"] = now.isoformat()
@@ -368,6 +390,15 @@ class Monitor:
         settings = dict(self.config.health)
         settings.update(watch.health)
         reasons: list[str] = []
+        challenge_limit = int(settings.get("max_consecutive_challenges", 1) or 1)
+        challenge_warning = (
+            int(record.get("consecutive_challenges", 0)) >= challenge_limit
+        )
+        if challenge_warning:
+            reasons.append(
+                f"{record['consecutive_challenges']} consecutive CAPTCHA/anti-bot "
+                "challenge(s); the portal needs manual sign-in"
+            )
         if settings.get("max_consecutive_empty") and int(
             record.get("consecutive_empty", 0)
         ) >= int(settings["max_consecutive_empty"]):
@@ -389,6 +420,7 @@ class Monitor:
             self.state.save()
             return None
         record["warning_active"] = True
+        record["challenge_warning_active"] = challenge_warning
         self.state.save()
         return Alert(
             watch=watch,

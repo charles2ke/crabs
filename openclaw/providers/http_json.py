@@ -30,7 +30,14 @@ from typing import Any
 
 from ..auth import MAX_RESPONSE_BYTES, Session, redact_url
 from ..models import Slot, Watch
-from .base import AuthenticationError, Provider, ProviderError, register_provider
+from ._portal_common import CHALLENGE_HINT, looks_like_challenge
+from .base import (
+    AuthenticationError,
+    ChallengeError,
+    Provider,
+    ProviderError,
+    register_provider,
+)
 
 DEFAULT_TIMEOUT = 20.0
 
@@ -87,6 +94,12 @@ class HttpJsonProvider(Provider):
                 request, timeout=self.timeout
             ) as response:
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
+        except urllib.error.HTTPError as exc:
+            raw = exc.read(MAX_RESPONSE_BYTES + 1)
+            self._raise_if_challenge(url, raw)
+            raise ProviderError(
+                f"request to {redact_url(url)!r} failed: HTTP {exc.code}"
+            ) from exc
         except (urllib.error.URLError, OSError) as exc:
             raise ProviderError(f"request to {redact_url(url)!r} failed: {exc}") from exc
 
@@ -103,6 +116,8 @@ class HttpJsonProvider(Provider):
         except AuthenticationError as exc:
             return self._retry_after_auth_failure(watch, session, url, headers, exc)
 
+        if status >= 400:
+            self._raise_if_challenge(url, raw)
         if status in (401, 403):
             return self._retry_after_auth_failure(watch, session, url, headers, None)
         if status >= 400:
@@ -134,6 +149,8 @@ class HttpJsonProvider(Provider):
                 f"session expired and re-login failed for watch {watch.label!r}"
             ) from (original or exc)
 
+        if status >= 400:
+            self._raise_if_challenge(url, raw)
         if status in (401, 403):
             raise AuthenticationError(
                 f"session expired and re-login failed for watch {watch.label!r}: HTTP {status}"
@@ -143,9 +160,16 @@ class HttpJsonProvider(Provider):
         return self._decode_json(url, raw)
 
     @staticmethod
+    def _raise_if_challenge(url: str, raw: bytes) -> None:
+        text = raw.decode("utf-8", "replace")
+        if looks_like_challenge(text):
+            raise ChallengeError(f"{CHALLENGE_HINT} (from {redact_url(url)!r})")
+
+    @staticmethod
     def _decode_json(url: str, raw: bytes) -> Any:
         stripped = raw.lstrip().lower()
         if stripped.startswith(b"<!doctype html") or stripped.startswith(b"<html"):
+            HttpJsonProvider._raise_if_challenge(url, stripped)
             raise ProviderError(
                 f"response from {redact_url(url)!r} looks like an HTML page, not JSON — "
                 "the portal may require sign in (configure an 'auth' block)"

@@ -6,7 +6,14 @@ currently available :class:`~openclaw.models.Slot` objects.
 
 from __future__ import annotations
 
-from .base import AuthenticationError, Provider, ProviderError, get_provider, register_provider
+from .base import (
+    AuthenticationError,
+    ChallengeError,
+    Provider,
+    ProviderError,
+    get_provider,
+    register_provider,
+)
 from .bls_international import BlsInternationalProvider
 from .http_json import HttpJsonProvider
 from .mock import MockProvider
@@ -20,6 +27,7 @@ __all__ = [
     "TlscontactProvider",
     "VfsGlobalProvider",
     "AuthenticationError",
+    "ChallengeError",
     "Provider",
     "ProviderError",
     "get_provider",

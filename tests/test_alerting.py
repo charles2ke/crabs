@@ -13,6 +13,12 @@ from openclaw.config import parse_config
 from openclaw.logging_utils import configure_logging
 from openclaw.monitor import Monitor
 from openclaw.notifiers import ConsoleNotifier
+from openclaw.providers.base import (
+    ChallengeError,
+    Provider,
+    ProviderError,
+    register_provider,
+)
 
 
 class Collector(ConsoleNotifier):
@@ -151,6 +157,89 @@ class HealthTests(unittest.TestCase):
         health = next(iter(state["_openclaw"]["health"].values()))
         self.assertEqual(health["successes"], 1)
         self.assertIn("last_success", health)
+
+
+class ChallengeProvider(Provider):
+    """Test provider that answers with a CAPTCHA challenge or a plain failure."""
+
+    name = "test-challenge"
+
+    def fetch(self, watch):
+        raise ChallengeError("portal returned a CAPTCHA/anti-bot challenge")
+
+
+class FailingProvider(Provider):
+    name = "test-failure"
+
+    def fetch(self, watch):
+        raise ProviderError("request failed: HTTP 500")
+
+
+register_provider(ChallengeProvider.name, ChallengeProvider)
+register_provider(FailingProvider.name, FailingProvider)
+
+
+class ChallengeHealthTests(unittest.TestCase):
+    def test_first_challenge_emits_health_alert(self):
+        collector = Collector()
+        monitor = Monitor(config([], provider=ChallengeProvider.name), [collector])
+        alerts = monitor.run_once()
+        self.assertEqual([alert.event_type for alert in alerts], ["health"])
+        self.assertIn("CAPTCHA/anti-bot challenge", alerts[0].message)
+        record = monitor.stats[next(iter(monitor.stats))]
+        self.assertEqual(record["challenges"], 1)
+        self.assertEqual(record["consecutive_challenges"], 1)
+        self.assertIn("last_challenge", record)
+        self.assertEqual(monitor.failed_watches, [monitor.config.watches[0].label])
+        # The warning is not repeated while the challenge persists.
+        self.assertEqual(monitor.run_once(), [])
+
+    def test_challenge_threshold_is_configurable(self):
+        collector = Collector()
+        monitor = Monitor(
+            config(
+                [],
+                provider=ChallengeProvider.name,
+                health={"max_consecutive_challenges": 2},
+            ),
+            [collector],
+        )
+        self.assertEqual(monitor.run_once(), [])
+        alerts = monitor.run_once()
+        self.assertEqual([alert.event_type for alert in alerts], ["health"])
+        self.assertIn("2 consecutive CAPTCHA/anti-bot", alerts[0].message)
+
+    def test_ordinary_failures_are_not_challenges(self):
+        collector = Collector()
+        monitor = Monitor(config([], provider=FailingProvider.name), [collector])
+        self.assertEqual(monitor.run_once(), [])
+        record = monitor.stats[next(iter(monitor.stats))]
+        self.assertEqual(record["challenges"], 0)
+        self.assertEqual(record["consecutive_challenges"], 0)
+        self.assertEqual(record["failures"], 1)
+
+    def test_successful_poll_resets_challenge_counter(self):
+        monitor = Monitor(config([], provider=ChallengeProvider.name), [])
+        monitor.run_once()
+        monitor.config = config([])
+        monitor._providers.clear()
+        monitor.run_once()
+        record = monitor.stats[next(iter(monitor.stats))]
+        self.assertEqual(record["consecutive_challenges"], 0)
+        self.assertEqual(record["challenges"], 1)
+
+    def test_empty_success_allows_warning_for_next_challenge_episode(self):
+        monitor = Monitor(config([], provider=ChallengeProvider.name), [])
+        self.assertEqual(len(monitor.run_once()), 1)
+        monitor.config = config([], provider=FailingProvider.name)
+        monitor._providers.clear()
+        self.assertEqual(monitor.run_once(), [])
+        monitor.config = config([])
+        monitor._providers.clear()
+        self.assertEqual(monitor.run_once(), [])
+        monitor.config = config([], provider=ChallengeProvider.name)
+        monitor._providers.clear()
+        self.assertEqual(len(monitor.run_once()), 1)
 
 
 class JsonLoggingTests(unittest.TestCase):

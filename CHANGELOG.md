@@ -6,6 +6,11 @@ format. This project follows semantic versioning.
 ## [Unreleased]
 
 ### Added
+- CAPTCHA/anti-bot challenge detection: providers raise `ChallengeError` for
+  challenge responses, the monitor tracks `challenges` and
+  `consecutive_challenges`, emits a provider-health warning (threshold
+  `max_consecutive_challenges`, default 1), and `--stats` prints challenge
+  counts. Challenges are reported, never solved or bypassed.
 - Real-world alert integrations: Slack incoming webhooks (Block Kit), Discord
   webhooks (embeds), and plain-text email over SMTP, with example configs at
   `examples/dublin_slack.json`, `examples/dublin_discord.json`, and

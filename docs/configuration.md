@@ -11,7 +11,7 @@
   "state_file": ".openclaw/state.json",
   "quiet_hours": {"start": "22:00", "end": "07:00", "timezone": "Europe/Dublin"},
   "throttle": {"max_alerts": 3, "interval_seconds": 3600, "minimum_gap_seconds": 60},
-  "health": {"max_consecutive_empty": 6, "max_consecutive_errors": 3, "max_stale_hours": 24},
+  "health": {"max_consecutive_empty": 6, "max_consecutive_errors": 3, "max_consecutive_challenges": 1, "max_stale_hours": 24},
   "notifiers": [{"type": "console"}],
   "watches": [{"country_from": "IE", "country_to": "FR", "city": "Dublin"}]
 }
@@ -37,6 +37,11 @@ Health detection is opt-in and can be global or per watch. Configure one or more
 of `max_consecutive_empty`, `max_consecutive_errors`, and `max_stale_hours`.
 A warning is sent once per stale episode and resets after slots are seen again.
 
+CAPTCHA, anti-bot, and WAF challenge responses are always reported as a health
+warning, on the first challenge by default. Open Claw never solves or bypasses
+a challenge; the warning exists so a human can decide how to proceed. Raise
+`max_consecutive_challenges` to tolerate occasional challenges before alerting.
+
 Any `${VAR}` string is expanded from the environment. Password-like auth fields
 and Telegram bot tokens must use a whole-value placeholder.
 
@@ -55,8 +60,8 @@ openclaw --config CONFIG [--once | --cycles N | --list-watches |
 - `--validate-config` / `--dry-run`: resolve environment references, report
   missing variable names without values, validate provider/notifier setup, and
   list redacted endpoints without network access.
-- `--stats`: print persisted slots-seen, success/failure, and last-success data
-  without polling.
+- `--stats`: print persisted slots-seen, success/failure, challenge-count, and
+  last-success data without polling.
 - `--state`: override `state_file`.
 - `--bootstrap`: on a cold state file, record current slots without alerting.
 - `--lock-timeout`: seconds to wait for another state-file user.
