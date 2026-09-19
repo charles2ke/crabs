@@ -357,6 +357,7 @@ class Monitor:
                 "slots_seen": 0,
                 "first_observed": now.isoformat(),
                 "warning_active": False,
+                "challenge_warning_active": False,
             },
         )
         if error:
@@ -371,14 +372,14 @@ class Monitor:
             else:
                 record["consecutive_challenges"] = 0
         else:
-            challenge_recovered = int(record.get("consecutive_challenges", 0)) > 0
             record["consecutive_errors"] = 0
             record["consecutive_challenges"] = 0
             record["successes"] = int(record.get("successes", 0)) + 1
             record["last_success"] = now.isoformat()
             record["slots_seen"] = int(record.get("slots_seen", 0)) + len(slots)
-            if challenge_recovered:
+            if record.get("challenge_warning_active"):
                 record["warning_active"] = False
+                record["challenge_warning_active"] = False
             if slots:
                 record["consecutive_empty"] = 0
                 record["last_slots_seen"] = now.isoformat()
@@ -390,7 +391,10 @@ class Monitor:
         settings.update(watch.health)
         reasons: list[str] = []
         challenge_limit = int(settings.get("max_consecutive_challenges", 1) or 1)
-        if int(record.get("consecutive_challenges", 0)) >= challenge_limit:
+        challenge_warning = (
+            int(record.get("consecutive_challenges", 0)) >= challenge_limit
+        )
+        if challenge_warning:
             reasons.append(
                 f"{record['consecutive_challenges']} consecutive CAPTCHA/anti-bot "
                 "challenge(s); the portal needs manual sign-in"
@@ -416,6 +420,7 @@ class Monitor:
             self.state.save()
             return None
         record["warning_active"] = True
+        record["challenge_warning_active"] = challenge_warning
         self.state.save()
         return Alert(
             watch=watch,

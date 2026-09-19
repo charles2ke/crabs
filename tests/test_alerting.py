@@ -231,6 +231,9 @@ class ChallengeHealthTests(unittest.TestCase):
     def test_empty_success_allows_warning_for_next_challenge_episode(self):
         monitor = Monitor(config([], provider=ChallengeProvider.name), [])
         self.assertEqual(len(monitor.run_once()), 1)
+        monitor.config = config([], provider=FailingProvider.name)
+        monitor._providers.clear()
+        self.assertEqual(monitor.run_once(), [])
         monitor.config = config([])
         monitor._providers.clear()
         self.assertEqual(monitor.run_once(), [])
