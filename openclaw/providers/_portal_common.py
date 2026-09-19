@@ -26,7 +26,6 @@ CHALLENGE_MARKERS = (
     "just a moment",
     "attention required",
     "checking your browser",
-    "bot",
 )
 
 CHALLENGE_HINT = (
@@ -137,16 +136,18 @@ def ensure_no_sign_in_wall(payload: Any, context_url: str) -> None:
             value = payload.get(key)
             if isinstance(value, str):
                 text_candidates.append(value)
-        if payload.get("authenticated") is False or payload.get("requiresLogin") is True:
-            raise AuthenticationError(
-                f"portal response from {redact_url(context_url)!r} indicates sign-in is required"
-            )
     elif isinstance(payload, str):
         text_candidates.append(payload)
 
     marker_text = "\n".join(text_candidates)
     if looks_like_challenge(marker_text):
         raise ChallengeError(f"{CHALLENGE_HINT} (from {redact_url(context_url)!r})")
+    if isinstance(payload, Mapping) and (
+        payload.get("authenticated") is False or payload.get("requiresLogin") is True
+    ):
+        raise AuthenticationError(
+            f"portal response from {redact_url(context_url)!r} indicates sign-in is required"
+        )
     marker_text = marker_text.lower()
     if "sign in" in marker_text or "login" in marker_text or "log in" in marker_text:
         raise AuthenticationError(
