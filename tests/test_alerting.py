@@ -228,6 +228,16 @@ class ChallengeHealthTests(unittest.TestCase):
         self.assertEqual(record["consecutive_challenges"], 0)
         self.assertEqual(record["challenges"], 1)
 
+    def test_empty_success_allows_warning_for_next_challenge_episode(self):
+        monitor = Monitor(config([], provider=ChallengeProvider.name), [])
+        self.assertEqual(len(monitor.run_once()), 1)
+        monitor.config = config([])
+        monitor._providers.clear()
+        self.assertEqual(monitor.run_once(), [])
+        monitor.config = config([], provider=ChallengeProvider.name)
+        monitor._providers.clear()
+        self.assertEqual(len(monitor.run_once()), 1)
+
 
 class JsonLoggingTests(unittest.TestCase):
     def test_json_logs_are_structured_and_redacted(self):

@@ -371,11 +371,14 @@ class Monitor:
             else:
                 record["consecutive_challenges"] = 0
         else:
+            challenge_recovered = int(record.get("consecutive_challenges", 0)) > 0
             record["consecutive_errors"] = 0
             record["consecutive_challenges"] = 0
             record["successes"] = int(record.get("successes", 0)) + 1
             record["last_success"] = now.isoformat()
             record["slots_seen"] = int(record.get("slots_seen", 0)) + len(slots)
+            if challenge_recovered:
+                record["warning_active"] = False
             if slots:
                 record["consecutive_empty"] = 0
                 record["last_slots_seen"] = now.isoformat()
