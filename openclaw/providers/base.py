@@ -16,6 +16,15 @@ class AuthenticationError(ProviderError):
     """Raised when provider authentication fails or a session expires."""
 
 
+class ChallengeError(AuthenticationError):
+    """Raised when a portal answers with a CAPTCHA, anti-bot, or WAF challenge.
+
+    Open Claw never solves or bypasses such challenges. The error exists so the
+    monitor can report a distinct provider-health condition and a human can
+    decide how to proceed.
+    """
+
+
 class Provider(abc.ABC):
     """Base class for slot providers."""
 

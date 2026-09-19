@@ -12,7 +12,8 @@ from openclaw.providers import (
     VfsGlobalProvider,
     get_provider,
 )
-from openclaw.providers.base import AuthenticationError
+from openclaw.providers._portal_common import ensure_no_sign_in_wall, ensure_not_html
+from openclaw.providers.base import AuthenticationError, ChallengeError
 from openclaw.providers.bls_international import parse_bls_availability
 from openclaw.providers.http_json import HttpJsonProvider
 from openclaw.providers.mock import MockProvider
@@ -332,3 +333,43 @@ class AdapterHttpStatusTests(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class ChallengeDetectionTests(unittest.TestCase):
+    def test_json_challenge_message_raises_challenge_error(self):
+        with self.assertRaises(ChallengeError) as caught:
+            ensure_no_sign_in_wall(
+                {"message": "Please complete the reCAPTCHA to continue"},
+                "https://portal.example.invalid/api",
+            )
+        self.assertIn("never solves or bypasses", str(caught.exception))
+
+    def test_sign_in_wall_is_not_a_challenge(self):
+        with self.assertRaises(AuthenticationError) as caught:
+            ensure_no_sign_in_wall(
+                {"message": "Please sign in to continue"},
+                "https://portal.example.invalid/api",
+            )
+        self.assertNotIsInstance(caught.exception, ChallengeError)
+
+    def test_html_challenge_page_raises_challenge_error(self):
+        with self.assertRaises(ChallengeError):
+            ensure_not_html(
+                "<html><title>Just a moment...</title></html>",
+                "https://portal.example.invalid/api",
+            )
+
+    def test_plain_html_page_stays_a_provider_error(self):
+        with self.assertRaises(ProviderError) as caught:
+            ensure_not_html(
+                "<html><body>Maintenance</body></html>",
+                "https://portal.example.invalid/api",
+            )
+        self.assertNotIsInstance(caught.exception, ChallengeError)
+
+    def test_http_json_decodes_challenge_page(self):
+        with self.assertRaises(ChallengeError):
+            HttpJsonProvider._decode_json(
+                "https://portal.example.invalid/api",
+                b"<!doctype html><html><body>Attention Required! Cloudflare</body></html>",
+            )

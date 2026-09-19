@@ -30,7 +30,14 @@ from typing import Any
 
 from ..auth import MAX_RESPONSE_BYTES, Session, redact_url
 from ..models import Slot, Watch
-from .base import AuthenticationError, Provider, ProviderError, register_provider
+from ._portal_common import CHALLENGE_HINT, looks_like_challenge
+from .base import (
+    AuthenticationError,
+    ChallengeError,
+    Provider,
+    ProviderError,
+    register_provider,
+)
 
 DEFAULT_TIMEOUT = 20.0
 
@@ -146,6 +153,9 @@ class HttpJsonProvider(Provider):
     def _decode_json(url: str, raw: bytes) -> Any:
         stripped = raw.lstrip().lower()
         if stripped.startswith(b"<!doctype html") or stripped.startswith(b"<html"):
+            text = stripped.decode("utf-8", "replace")
+            if looks_like_challenge(text):
+                raise ChallengeError(f"{CHALLENGE_HINT} (from {redact_url(url)!r})")
             raise ProviderError(
                 f"response from {redact_url(url)!r} looks like an HTML page, not JSON — "
                 "the portal may require sign in (configure an 'auth' block)"

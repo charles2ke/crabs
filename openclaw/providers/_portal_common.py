@@ -9,7 +9,31 @@ from typing import Any, Mapping
 
 from ..auth import redact_url
 from ..models import Slot, Watch
-from .base import AuthenticationError, ProviderError
+from .base import AuthenticationError, ChallengeError, ProviderError
+
+#: Markers that identify CAPTCHA, anti-bot, or WAF interstitial responses.
+CHALLENGE_MARKERS = (
+    "captcha",
+    "recaptcha",
+    "hcaptcha",
+    "turnstile",
+    "are you a robot",
+    "are you a human",
+    "bot detection",
+    "anti-bot",
+    "cf-chl",
+    "cf_chl",
+    "just a moment",
+    "attention required",
+    "checking your browser",
+    "bot",
+)
+
+CHALLENGE_HINT = (
+    "portal returned a CAPTCHA/anti-bot challenge; Open Claw never solves or "
+    "bypasses challenges — use a permitted endpoint or complete the challenge "
+    "manually"
+)
 
 _PII_QUERY_KEYS = {
     "applicant",
@@ -84,11 +108,21 @@ def redact_booking_url(url: str | None) -> str | None:
     )
 
 
+def looks_like_challenge(text: str) -> bool:
+    """True when ``text`` contains a CAPTCHA/anti-bot challenge marker."""
+    lowered = text.lower()
+    return any(marker in lowered for marker in CHALLENGE_MARKERS)
+
+
 def ensure_not_html(payload: Any, context_url: str) -> None:
     """Reject payloads that are HTML documents or snippets."""
     if isinstance(payload, str):
         lowered = payload.lstrip().lower()
         if lowered.startswith("<!doctype html") or lowered.startswith("<html"):
+            if looks_like_challenge(lowered):
+                raise ChallengeError(
+                    f"{CHALLENGE_HINT} (from {redact_url(context_url)!r})"
+                )
             raise ProviderError(
                 f"response from {redact_url(context_url)!r} looks like an HTML page, not JSON — "
                 "the portal may require sign in via a supported access path"
@@ -110,12 +144,10 @@ def ensure_no_sign_in_wall(payload: Any, context_url: str) -> None:
     elif isinstance(payload, str):
         text_candidates.append(payload)
 
-    marker_text = "\n".join(text_candidates).lower()
-    if "captcha" in marker_text or "recaptcha" in marker_text or "bot" in marker_text:
-        raise AuthenticationError(
-            "portal requires CAPTCHA or anti-bot verification; "
-            "Open Claw only supports permitted JSON endpoint access"
-        )
+    marker_text = "\n".join(text_candidates)
+    if looks_like_challenge(marker_text):
+        raise ChallengeError(f"{CHALLENGE_HINT} (from {redact_url(context_url)!r})")
+    marker_text = marker_text.lower()
     if "sign in" in marker_text or "login" in marker_text or "log in" in marker_text:
         raise AuthenticationError(
             f"portal response from {redact_url(context_url)!r} indicates sign-in is required"

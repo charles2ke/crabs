@@ -21,11 +21,19 @@ from .notifiers import (
     SlackNotifier,
     WebhookNotifier,
 )
-from .providers import AuthenticationError, Provider, ProviderError, get_provider, register_provider
+from .providers import (
+    AuthenticationError,
+    ChallengeError,
+    Provider,
+    ProviderError,
+    get_provider,
+    register_provider,
+)
 
 __all__ = [
     "Alert",
     "AuthenticationError",
+    "ChallengeError",
     "Config",
     "ConfigError",
     "ConsoleNotifier",

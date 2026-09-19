@@ -292,6 +292,7 @@ def parse_config(data: Mapping[str, Any]) -> Config:
                     (
                         "max_consecutive_empty",
                         "max_consecutive_errors",
+                        "max_consecutive_challenges",
                         "max_stale_hours",
                     ),
                 ),
@@ -339,7 +340,12 @@ def parse_config(data: Mapping[str, Any]) -> Config:
         health=_validate_limits(
             data.get("health"),
             "'health'",
-            ("max_consecutive_empty", "max_consecutive_errors", "max_stale_hours"),
+            (
+                "max_consecutive_empty",
+                "max_consecutive_errors",
+                "max_consecutive_challenges",
+                "max_stale_hours",
+            ),
         ),
     )
 

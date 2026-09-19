@@ -219,6 +219,7 @@ def _print_stats(config: Config) -> None:
             f"{watch.label}: slots_seen={record.get('slots_seen', 0)} "
             f"successes={record.get('successes', 0)} "
             f"failures={record.get('failures', 0)} "
+            f"challenges={record.get('challenges', 0)} "
             f"last_success={record.get('last_success', 'never')}"
         )
 

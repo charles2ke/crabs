@@ -2,7 +2,10 @@
 
 Open Claw reads only endpoints the operator configures. It contains no live
 consulate endpoints, does not bypass CAPTCHA, WAF, authentication, or rate
-limits, and never books, holds, or submits an appointment.
+limits, and never books, holds, or submits an appointment. When a portal
+answers with a CAPTCHA or anti-bot challenge, the poll fails and a
+provider-health warning is raised for a human to handle; the challenge is
+never solved or worked around.
 
 Keep secrets in `${ENV_VAR}` references. Literal password-like fields and
 Telegram tokens are rejected. Authentication state remains in memory. Logs
