@@ -72,7 +72,8 @@ A minimal config is one notifier and one watch:
 ```
 
 For a real portal, copy one of the `examples/dublin_http.json`,
-`dublin_vfs.json`, `dublin_tls.json`, or `dublin_bls.json` files and configure
+`examples/dublin_vfs.json`, `examples/dublin_tls.json`, or
+`examples/dublin_bls.json` files and configure
 only an endpoint you are entitled to poll. Secrets belong in environment
 variables and are referenced as `${VAR}`. Then validate offline before the
 first live run:
@@ -93,7 +94,7 @@ python -m openclaw --config config.json --stats
 | `--validate-config` / `--dry-run` | Offline check of config, providers, and notifiers |
 | `--stats` | Print persisted health statistics without polling |
 | `--state PATH` | Override `state_file` |
-| `--bootstrap` | Record current slots on a cold state file without alerting |
+| `--bootstrap` | On a cold state file, record current slots without slot alerts (health warnings are still sent) |
 | `--lock-timeout SECONDS` | Wait for another run holding the state lock |
 | `--log-format json` | One redacted JSON object per log line |
 | `--verbose`, `-v` | Debug logging |
@@ -117,8 +118,10 @@ scheduled workflow.
   the state file or use `--state` with a fresh path to start over.
 - **Exit code `4`.** Another run still holds the lock; raise `--lock-timeout` or
   space out the schedule.
-- **A challenge warning appears.** The portal returned a CAPTCHA/WAF response.
-  Open Claw stops there by design — decide how to proceed yourself.
+- **A challenge warning appears.** The portal returned a CAPTCHA/anti-bot/WAF
+  response. That poll fails and a health warning is raised once
+  `max_consecutive_challenges` (default `1`) is reached; Open Claw never solves
+  or bypasses the challenge, so sign in yourself and decide how to proceed.
 - **Missing environment variable.** `--validate-config` names the variable
   without printing any value.
 
