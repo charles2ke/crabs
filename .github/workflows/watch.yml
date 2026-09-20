@@ -19,7 +19,7 @@ on:
         default: examples/dublin.json
         required: false
       bootstrap:
-        description: Record current slots without alerting (first run)
+        description: Record current slots without slot alerts (first run)
         type: boolean
         default: false
         required: false

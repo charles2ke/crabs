@@ -218,9 +218,9 @@ class Monitor:
         """Poll every watch once and dispatch alerts for new slots.
 
         In bootstrap mode, a cold (missing) state store is filled with the
-        slots that are currently on offer and no alerts are sent, so a first
+        slots that are currently on offer without slot alerts, so a first
         scheduled run does not dump the whole existing backlog at the
-        operator.
+        operator. Health warnings may still be sent.
         """
         alerts: list[Alert] = []
         available_keys: list[str] = []
@@ -229,7 +229,7 @@ class Monitor:
         now = self.clock()
         self._flush_pending(now, alerts)
         if bootstrapping:
-            LOGGER.info("bootstrap run: recording current slots without alerting")
+            LOGGER.info("bootstrap run: recording current slots without slot alerts")
         for watch in self.config.watches:
             try:
                 slots = self.check_watch(watch)

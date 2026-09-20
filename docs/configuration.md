@@ -63,7 +63,8 @@ openclaw --config CONFIG [--once | --cycles N | --list-watches |
 - `--stats`: print persisted slots-seen, success/failure, challenge-count, and
   last-success data without polling.
 - `--state`: override `state_file`.
-- `--bootstrap`: on a cold state file, record current slots without alerting.
+- `--bootstrap`: on a cold state file, record current slots without slot alerts
+  (health warnings may still be sent).
 - `--lock-timeout`: seconds to wait for another state-file user.
 - `--log-format json`: one redacted JSON object per log line.
 
