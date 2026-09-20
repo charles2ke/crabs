@@ -82,7 +82,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "on a cold state store, record the currently available slots as "
-            "already seen and do not alert (use for the first scheduled run)"
+            "already seen without slot alerts (health warnings may still be sent; "
+            "use for the first scheduled run)"
         ),
     )
     parser.add_argument(
