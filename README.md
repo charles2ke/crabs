@@ -1,13 +1,26 @@
 # Open Claw
 
-Secure Open Claw for everyone.
+[![CI](https://github.com/charles2ke/crabs/actions/workflows/ci.yml/badge.svg)](https://github.com/charles2ke/crabs/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
+[![Dependencies](https://img.shields.io/badge/runtime%20dependencies-none-brightgreen)](pyproject.toml)
 
-Open Claw is a dependency-free Python tool that polls configured Schengen visa
-appointment portals and alerts on availability changes. The reference use case is
-applying from Ireland at consulates and visa centres in Dublin.
+Open Claw watches Schengen visa appointment portals and tells you the moment a
+slot appears — by console, file, webhook, Telegram, Slack, Discord, or email.
+It is a single dependency-free Python package that runs from a checkout, a cron
+job, or a GitHub Actions schedule. The reference use case is applying from
+Ireland at consulates and visa centres in Dublin.
 
-It is strictly an **observe-and-notify** tool: it never books, holds, or submits
-appointments and does not bypass authentication, CAPTCHA, WAF, or rate limits.
+## What it does and does not do
+
+| Open Claw does | Open Claw never does |
+| --- | --- |
+| Poll endpoints you are entitled to poll | Book, hold, or submit an appointment |
+| Compare results with persisted state | Bypass authentication, CAPTCHA, WAF, or rate limits |
+| Notify you about the change | Solve a challenge or hide that one happened |
+
+It is strictly an **observe-and-notify** tool. Read
+[Security and responsible use](docs/security.md) before pointing it at a real
+portal.
 
 ## Features
 
@@ -31,7 +44,8 @@ python -m openclaw --config examples/dublin.json --once
 ```
 
 `examples/dublin.json` uses the offline `mock` provider and watches French and
-Spanish appointments in Dublin. A first run prints alerts such as:
+Spanish appointments in Dublin, so the quickstart makes no network requests. A
+first run prints alerts such as:
 
 ```text
 [2026-09-02T20:36:21+00:00] 2 new Schengen slot(s) for FR consulate in Dublin, IE (short-stay):
@@ -40,9 +54,28 @@ Spanish appointments in Dublin. A first run prints alerts such as:
 ```
 
 Run it again and persisted state prevents duplicate alerts. Remove `--once` to
-keep polling. Before using a real portal, copy one of the `dublin_http`,
-`dublin_vfs`, `dublin_tls`, or `dublin_bls` examples and configure only an
-endpoint you are entitled to poll.
+keep polling.
+
+## Your own config
+
+A minimal config is one notifier and one watch:
+
+```json
+{
+  "poll_interval": 300,
+  "state_file": ".openclaw/state.json",
+  "notifiers": [{ "type": "console" }],
+  "watches": [
+    { "country_from": "IE", "country_to": "FR", "city": "Dublin", "provider": "mock" }
+  ]
+}
+```
+
+For a real portal, copy one of the `examples/dublin_http.json`,
+`dublin_vfs.json`, `dublin_tls.json`, or `dublin_bls.json` files and configure
+only an endpoint you are entitled to poll. Secrets belong in environment
+variables and are referenced as `${VAR}`. Then validate offline before the
+first live run:
 
 ```bash
 python -m openclaw --config config.json --validate-config
@@ -50,20 +83,60 @@ python -m openclaw --config config.json --once --log-format json
 python -m openclaw --config config.json --stats
 ```
 
+## Common CLI flags
+
+| Flag | Purpose |
+| --- | --- |
+| `--config PATH`, `-c` | JSON config file (required) |
+| `--once` / `--cycles N` | Run one cycle, or exactly N cycles |
+| `--list-watches` | Print configured watch identities and exit |
+| `--validate-config` / `--dry-run` | Offline check of config, providers, and notifiers |
+| `--stats` | Print persisted health statistics without polling |
+| `--state PATH` | Override `state_file` |
+| `--bootstrap` | Record current slots on a cold state file without alerting |
+| `--lock-timeout SECONDS` | Wait for another run holding the state lock |
+| `--log-format json` | One redacted JSON object per log line |
+| `--verbose`, `-v` | Debug logging |
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Ran successfully, no alert dispatched |
+| `2` | Configuration, provider, or notifier setup error |
+| `3` | Provider failure and nothing was alerted |
+| `4` | Another run holds the state lock |
+| `10` | One or more slot or health alerts dispatched |
+
+Code `10` wins over `3`, which makes `--once` safe to drive from cron or a
+scheduled workflow.
+
+## Troubleshooting
+
+- **No alerts on the second run.** Expected: state suppresses repeats. Delete
+  the state file or use `--state` with a fresh path to start over.
+- **Exit code `4`.** Another run still holds the lock; raise `--lock-timeout` or
+  space out the schedule.
+- **A challenge warning appears.** The portal returned a CAPTCHA/WAF response.
+  Open Claw stops there by design — decide how to proceed yourself.
+- **Missing environment variable.** `--validate-config` names the variable
+  without printing any value.
+
 ## Documentation
 
-- [Configuration and CLI](https://github.com/charles2ke/crabs/blob/main/docs/configuration.md)
-- [Provider and authentication reference](https://github.com/charles2ke/crabs/blob/main/docs/providers.md)
-- [Notifier reference](https://github.com/charles2ke/crabs/blob/main/docs/notifiers.md)
-- [Scheduling with Actions, cron, or systemd](https://github.com/charles2ke/crabs/blob/main/docs/scheduling.md)
-- [Security and responsible use](https://github.com/charles2ke/crabs/blob/main/docs/security.md)
-- [Contributing](https://github.com/charles2ke/crabs/blob/main/CONTRIBUTING.md)
-- [Security policy](https://github.com/charles2ke/crabs/blob/main/SECURITY.md)
-- [Changelog](https://github.com/charles2ke/crabs/blob/main/CHANGELOG.md)
+- [Configuration and CLI](docs/configuration.md)
+- [Provider and authentication reference](docs/providers.md)
+- [Notifier reference](docs/notifiers.md)
+- [Scheduling with Actions, cron, or systemd](docs/scheduling.md)
+- [Security and responsible use](docs/security.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
 
 ## Development
 
 ```bash
+pip install -e '.[dev]'
 python -m unittest discover -s tests -v
 python -m mypy openclaw
 ```
