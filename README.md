@@ -84,11 +84,22 @@ python -m openclaw --config config.json --once --log-format json
 python -m openclaw --config config.json --stats
 ```
 
+Name the file `openclaw.json`, `config.json`, or `.openclaw/config.json` and
+`--config` becomes optional — `python -m openclaw --once` finds it in the
+working directory.
+
+`--stats` prints one line per watch, so you can see whether a portal is
+answering at all:
+
+```text
+FR consulate in Dublin, IE (short-stay): slots_seen=3 successes=12 failures=0 challenges=0 last_success=2026-09-02T20:36:21+00:00
+```
+
 ## Common CLI flags
 
 | Flag | Purpose |
 | --- | --- |
-| `--config PATH`, `-c` | JSON config file (required) |
+| `--config PATH`, `-c` | JSON config file (default: `openclaw.json`, `config.json`, or `.openclaw/config.json` in the working directory) |
 | `--once` / `--cycles N` | Run one cycle, or exactly N cycles |
 | `--list-watches` | Print configured watch identities and exit |
 | `--validate-config` / `--dry-run` | Offline check of config, providers, and notifiers |
@@ -114,6 +125,8 @@ scheduled workflow.
 
 ## Troubleshooting
 
+- **`no config file given and none found`.** Pass `--config PATH`, or name the
+  file `openclaw.json`, `config.json`, or `.openclaw/config.json`.
 - **No alerts on the second run.** Expected: state suppresses repeats. Delete
   the state file or use `--state` with a fresh path to start over.
 - **Exit code `4`.** Another run still holds the lock; raise `--lock-timeout` or
@@ -124,6 +137,9 @@ scheduled workflow.
   or bypasses the challenge, so sign in yourself and decide how to proceed.
 - **Missing environment variable.** `--validate-config` names the variable
   without printing any value.
+
+`python -m openclaw --help` lists every flag together with usage examples and
+the exit-code table.
 
 ## Documentation
 

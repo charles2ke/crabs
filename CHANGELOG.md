@@ -6,6 +6,10 @@ format. This project follows semantic versioning.
 ## [Unreleased]
 
 ### Added
+- CLI usability: `--config` is now optional and falls back to `openclaw.json`,
+  `config.json`, or `.openclaw/config.json` in the working directory, with an
+  error that names the paths searched; `--help` gained usage examples and the
+  exit-code table; `--stats` explains what to do when no state exists yet.
 - CAPTCHA/anti-bot challenge detection: providers raise `ChallengeError` for
   challenge responses, the monitor tracks `challenges` and
   `consecutive_challenges`, emits a provider-health warning (threshold
