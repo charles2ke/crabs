@@ -136,7 +136,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _resolve_config_path(explicit: str | None) -> Path:
     """Return the config path to load, or raise a helpful ConfigError."""
-    if explicit:
+    if explicit is not None:
         return Path(explicit).expanduser()
     for candidate in DEFAULT_CONFIG_PATHS:
         if candidate.is_file():
