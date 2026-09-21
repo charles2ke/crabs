@@ -173,10 +173,9 @@ class CliTests(unittest.TestCase):
 
     def test_discovery_falls_back_to_nested_config(self):
         with TemporaryDirectory() as tmp:
-            (Path(tmp) / ".openclaw").mkdir()
-            write_config(
-                tmp, filename=os.path.join(".openclaw", "config.json"), city="Galway"
-            )
+            nested = Path(tmp) / ".openclaw"
+            nested.mkdir()
+            write_config(nested, city="Galway")
             cwd = os.getcwd()
             os.chdir(tmp)
             try:
