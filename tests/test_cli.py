@@ -15,20 +15,20 @@ from openclaw import __version__
 from openclaw.cli import EXIT_CONFIG_ERROR, EXIT_NO_SLOTS, build_parser, main
 
 
-def write_config(directory, **updates):
+def write_config(directory, filename="config.json", city="Dublin", **updates):
     data = {
         "watches": [
             {
                 "country_from": "IE",
                 "country_to": "FR",
-                "city": "Dublin",
+                "city": city,
                 "provider": "mock",
                 "options": {"slots": []},
             }
         ]
     }
     data.update(updates)
-    path = Path(directory) / "config.json"
+    path = Path(directory) / filename
     path.write_text(json.dumps(data), encoding="utf-8")
     return path
 
@@ -155,6 +155,37 @@ class CliTests(unittest.TestCase):
                 os.chdir(cwd)
         self.assertEqual(code, EXIT_NO_SLOTS)
         self.assertIn("via mock", output.getvalue())
+
+    def test_discovery_prefers_openclaw_json_over_config_json(self):
+        with TemporaryDirectory() as tmp:
+            write_config(tmp, city="Cork")
+            write_config(tmp, filename="openclaw.json", city="Dublin")
+            cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                with redirect_stdout(io.StringIO()) as output:
+                    code = main(["--list-watches"])
+            finally:
+                os.chdir(cwd)
+        self.assertEqual(code, EXIT_NO_SLOTS)
+        self.assertIn("Dublin", output.getvalue())
+        self.assertNotIn("Cork", output.getvalue())
+
+    def test_discovery_falls_back_to_nested_config(self):
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / ".openclaw").mkdir()
+            write_config(
+                tmp, filename=os.path.join(".openclaw", "config.json"), city="Galway"
+            )
+            cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                with redirect_stdout(io.StringIO()) as output:
+                    code = main(["--list-watches"])
+            finally:
+                os.chdir(cwd)
+        self.assertEqual(code, EXIT_NO_SLOTS)
+        self.assertIn("Galway", output.getvalue())
 
     def test_missing_config_reports_searched_paths(self):
         with TemporaryDirectory() as tmp:
