@@ -48,12 +48,15 @@ and Telegram bot tokens must use a whole-value placeholder.
 ## CLI
 
 ```text
-openclaw --config CONFIG [--once | --cycles N | --list-watches |
+openclaw [--config CONFIG] [--once | --cycles N | --list-watches |
   --validate-config | --dry-run | --stats]
   [--state PATH] [--bootstrap] [--lock-timeout SECONDS]
   [--log-format text|json] [--verbose]
 ```
 
+- `--config` / `-c`: path to the JSON config file. When omitted, the first of
+  `openclaw.json`, `config.json`, or `.openclaw/config.json` in the working
+  directory is used; if none exists the error lists the paths searched.
 - `--once`: one polling cycle.
 - `--cycles N`: exactly N positive cycles.
 - `--list-watches`: print configured watch identities.
@@ -61,7 +64,9 @@ openclaw --config CONFIG [--once | --cycles N | --list-watches |
   missing variable names without values, validate provider/notifier setup, and
   list redacted endpoints without network access.
 - `--stats`: print persisted slots-seen, success/failure, challenge-count, and
-  last-success data without polling.
+  last-success data without polling. If no state file is configured or the
+  state file does not exist yet, a short hint is printed instead of empty
+  counters.
 - `--state`: override `state_file`.
 - `--bootstrap`: on a cold state file, record current slots without slot alerts
   (health warnings may still be sent).

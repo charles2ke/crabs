@@ -33,14 +33,46 @@ EXIT_LOCKED = 4
 #: Ran successfully and alerted about at least one new slot.
 EXIT_ALERTS = 10
 
+#: Config files looked up (in order) when --config is not given.
+DEFAULT_CONFIG_PATHS = (
+    Path("openclaw.json"),
+    Path("config.json"),
+    Path(".openclaw/config.json"),
+)
+
+EPILOG = """\
+examples:
+  openclaw -c examples/dublin.json --once        run one offline cycle
+  openclaw -c config.json --validate-config      check config without polling
+  openclaw -c config.json --once --bootstrap     first scheduled run, no alerts
+  openclaw -c config.json --stats                show persisted health counters
+
+exit codes:
+  0   ran successfully, no alert dispatched
+  2   configuration, provider, or notifier setup error
+  3   provider failure and nothing was alerted
+  4   another run holds the state lock
+  10  one or more slot or health alerts dispatched
+"""
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="openclaw",
         description="Watch Schengen visa appointment slots and alert on availability.",
+        epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("--config", "-c", required=True, help="path to a JSON config file")
+    parser.add_argument(
+        "--config",
+        "-c",
+        help=(
+            "path to a JSON config file (default: first of "
+            + ", ".join(str(path) for path in DEFAULT_CONFIG_PATHS)
+            + " found in the working directory)"
+        ),
+    )
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument(
         "--once",
@@ -102,15 +134,31 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_config_path(explicit: str | None) -> Path:
+    """Return the config path to load, or raise a helpful ConfigError."""
+    if explicit:
+        return Path(explicit).expanduser()
+    for candidate in DEFAULT_CONFIG_PATHS:
+        if candidate.is_file():
+            LOGGER.debug("using discovered config %s", candidate)
+            return candidate
+    searched = ", ".join(str(path) for path in DEFAULT_CONFIG_PATHS)
+    raise ConfigError(
+        f"no config file given and none found (looked for: {searched}); "
+        "pass --config PATH, e.g. --config examples/dublin.json"
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     configure_logging(args.verbose, args.log_format)
 
     try:
+        config_path = _resolve_config_path(args.config)
         if args.validate_config or args.dry_run:
-            config = inspect_config(args.config)
+            config = inspect_config(config_path)
         else:
-            config = load_config(args.config)
+            config = load_config(config_path)
     except ConfigError as exc:
         LOGGER.error("%s", exc, extra={"event": "config_error"})
         return EXIT_CONFIG_ERROR
@@ -210,6 +258,15 @@ def _print_inventory(config: Config) -> None:
 
 
 def _print_stats(config: Config) -> None:
+    if config.state_file is None:
+        print("No state file configured; set 'state_file' or pass --state to keep stats.")
+        return
+    if not config.state_file.exists():
+        print(
+            f"No state yet at {config.state_file}; "
+            "run a polling cycle first (for example --once)."
+        )
+        return
     store = SeenStore(config.state_file)
     records = store.meta.get("health", {})
     if not isinstance(records, dict):
