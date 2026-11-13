@@ -223,6 +223,94 @@ class CliTests(unittest.TestCase):
         self.assertIn("examples:", output.getvalue())
         self.assertIn("exit codes:", output.getvalue())
 
+    def test_test_notifiers_sends_one_test_alert_per_notifier(self):
+        with TemporaryDirectory() as tmp:
+            log = Path(tmp) / "alerts.jsonl"
+            state = Path(tmp) / "state.json"
+            path = write_config(
+                tmp,
+                state_file=str(state),
+                notifiers=[{"type": "console"}, {"type": "file", "path": str(log)}],
+            )
+            with redirect_stdout(io.StringIO()) as output:
+                code = main(["--config", str(path), "--test-notifiers"])
+            records = [json.loads(line) for line in log.read_text().splitlines()]
+            state_written = state.exists()
+        self.assertEqual(code, EXIT_NO_SLOTS)
+        self.assertIn("Test alert for FR consulate in Dublin, IE", output.getvalue())
+        self.assertIn("notifier console: ok", output.getvalue())
+        self.assertIn("notifier file: ok", output.getvalue())
+        self.assertEqual([record["event_type"] for record in records], ["test"])
+        self.assertFalse(state_written)
+
+    def test_test_notifiers_reports_each_failure_and_exits_nonzero(self):
+        with TemporaryDirectory() as tmp:
+            path = write_config(
+                tmp,
+                notifiers=[
+                    {"type": "webhook", "url": "https://hook.invalid/path"},
+                    {"type": "console"},
+                ],
+            )
+            with patch("urllib.request.urlopen", side_effect=OSError("unreachable")):
+                with redirect_stdout(io.StringIO()) as output, redirect_stderr(io.StringIO()):
+                    code = main(["--config", str(path), "--test-notifiers"])
+        self.assertEqual(code, EXIT_CONFIG_ERROR)
+        self.assertIn("notifier webhook: FAILED: webhook delivery failed", output.getvalue())
+        self.assertIn("notifier console: ok", output.getvalue())
+
+    def test_undelivered_alert_is_reported_instead_of_no_new_slots(self):
+        with TemporaryDirectory() as tmp:
+            path = write_config(
+                tmp,
+                state_file=str(Path(tmp) / "state.json"),
+                notifiers=[{"type": "webhook", "url": "https://hook.invalid/path"}],
+                watches=[
+                    {
+                        "country_from": "IE",
+                        "country_to": "FR",
+                        "city": "Dublin",
+                        "provider": "mock",
+                        "options": {"slots": [{"in_days": 30}]},
+                    }
+                ],
+            )
+            with patch("urllib.request.urlopen", side_effect=OSError("unreachable")):
+                with redirect_stderr(io.StringIO()) as error:
+                    code = main(["--config", str(path), "--once"])
+        self.assertEqual(code, EXIT_NO_SLOTS)
+        self.assertIn("1 alert(s) not delivered yet", error.getvalue())
+        self.assertNotIn("no new slots found", error.getvalue())
+
+    def test_inventory_hides_ntfy_topic_and_shows_pushover_api(self):
+        env = {"OPENCLAW_PUSHOVER_TOKEN": "a" * 30}
+        with TemporaryDirectory() as tmp, patch.dict(os.environ, env):
+            path = write_config(
+                tmp,
+                notifiers=[
+                    {
+                        "type": "ntfy",
+                        "server": "https://ntfy.example.invalid",
+                        "topic": "secret-topic-123",
+                    },
+                    {
+                        "type": "pushover",
+                        "token": "${OPENCLAW_PUSHOVER_TOKEN}",
+                        "user": "u" * 30,
+                    },
+                ],
+            )
+            with redirect_stdout(io.StringIO()) as output:
+                code = main(["--config", str(path), "--validate-config"])
+        self.assertEqual(code, EXIT_NO_SLOTS)
+        self.assertIn("notifier ntfy endpoint=https://ntfy.example.invalid", output.getvalue())
+        self.assertIn(
+            "notifier pushover endpoint=https://api.pushover.net/1/messages.json",
+            output.getvalue(),
+        )
+        self.assertNotIn("secret-topic-123", output.getvalue())
+        self.assertNotIn("a" * 30, output.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

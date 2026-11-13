@@ -8,16 +8,23 @@ import logging
 import sys
 import urllib.parse
 from contextlib import ExitStack
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
 from . import __version__
 from .auth import redact_url
 from .config import Config, ConfigError, inspect_config, load_config
-from .logging_utils import configure_logging
+from .logging_utils import configure_logging, redact_log_text
 from .locking import FileLock, LockError
+from .models import Alert
 from .monitor import Monitor, SeenStore
-from .notifiers import NotifierError, build_notifier
+from .notifiers import (
+    NTFY_DEFAULT_SERVER,
+    PUSHOVER_API_URL,
+    NotifierError,
+    build_notifier,
+)
 from .providers import ProviderError, get_provider
 
 LOGGER = logging.getLogger("openclaw")
@@ -44,12 +51,13 @@ EPILOG = """\
 examples:
   openclaw -c examples/dublin.json --once        run one offline cycle
   openclaw -c config.json --validate-config      check config without polling
+  openclaw -c config.json --test-notifiers       send a test alert to each notifier
   openclaw -c config.json --once --bootstrap     first scheduled run, no alerts
   openclaw -c config.json --stats                show persisted health counters
 
 exit codes:
   0   ran successfully, no alert dispatched
-  2   configuration, provider, or notifier setup error
+  2   configuration, provider, or notifier setup error (or a failed test alert)
   3   provider failure and nothing was alerted
   4   another run holds the state lock
   10  one or more slot or health alerts dispatched
@@ -105,6 +113,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print persisted per-watch health statistics without polling",
     )
+    modes.add_argument(
+        "--test-notifiers",
+        action="store_true",
+        help=(
+            "send one test alert through every configured notifier and exit; "
+            "does not poll providers or touch the state file"
+        ),
+    )
     parser.add_argument(
         "--state",
         help="path to the seen-slot state file (overrides 'state_file' in the config)",
@@ -155,7 +171,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         config_path = _resolve_config_path(args.config)
-        if args.validate_config or args.dry_run:
+        if args.validate_config or args.dry_run or args.test_notifiers:
             config = inspect_config(config_path)
         else:
             config = load_config(config_path)
@@ -182,6 +198,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.stats:
         _print_stats(config)
         return EXIT_NO_SLOTS
+
+    if args.test_notifiers:
+        return _test_notifiers(config)
 
     if args.bootstrap and not config.state_file:
         LOGGER.error("--bootstrap needs a state file: set 'state_file' or pass --state")
@@ -215,12 +234,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             LOGGER.info("stopped by user")
             return EXIT_NO_SLOTS
         failed = monitor.failed_watches
+        retrying = monitor.pending_retries
 
     if alerts:
         return EXIT_ALERTS
     if failed:
         LOGGER.warning("%d watch(es) failed: %s", len(failed), ", ".join(failed))
         return EXIT_PROVIDER_ERROR
+    if retrying:
+        LOGGER.warning(
+            "%d alert(s) not delivered yet; they will be retried on a later run",
+            retrying,
+            extra={"event": "alert_retry"},
+        )
+        return EXIT_NO_SLOTS
     LOGGER.info("no new slots found")
     return EXIT_NO_SLOTS
 
@@ -251,10 +278,45 @@ def _print_inventory(config: Config) -> None:
         kind = str(spec.get("type", "console")).lower()
         if kind == "telegram":
             endpoint = "https://api.telegram.org/sendMessage"
+        elif kind == "ntfy":
+            # Only the server: on public ntfy.sh the topic name is the secret.
+            endpoint = spec.get("server") or NTFY_DEFAULT_SERVER
+        elif kind == "pushover":
+            endpoint = PUSHOVER_API_URL
         else:
             endpoint = spec.get("url") or spec.get("path")
         detail = f" endpoint={_endpoint(endpoint)}" if endpoint else ""
         print(f"notifier {kind}{detail}")
+
+
+def _test_notifiers(config: Config) -> int:
+    """Send one test alert through each notifier and report per-notifier results."""
+    alert = Alert(
+        watch=config.watches[0],
+        slots=(),
+        created_at=datetime.now(timezone.utc),
+        event_type="test",
+        message="This is a test alert from Open Claw; notifications are working.",
+    )
+    failures = 0
+    for spec in config.notifiers:
+        kind = str(spec.get("type", "console")).lower()
+        try:
+            build_notifier(spec).send(alert)
+        except NotifierError as exc:
+            failures += 1
+            print(f"notifier {kind}: FAILED: {redact_log_text(str(exc))}")
+        else:
+            print(f"notifier {kind}: ok")
+    if failures:
+        LOGGER.error(
+            "%d of %d notifier(s) failed the test alert",
+            failures,
+            len(config.notifiers),
+            extra={"event": "notifier_test_failed"},
+        )
+        return EXIT_CONFIG_ERROR
+    return EXIT_NO_SLOTS
 
 
 def _print_stats(config: Config) -> None:

@@ -10,7 +10,7 @@ import tempfile
 import time
 from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Collection, Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 from .config import Config
@@ -20,6 +20,10 @@ from .providers import ChallengeError, ProviderError, get_provider
 from .providers.base import Provider
 
 LOGGER = logging.getLogger("openclaw")
+
+#: Total delivery attempts (first send plus retries on later cycles) per
+#: notifier before an undeliverable alert is dropped.
+MAX_DELIVERY_ATTEMPTS = 5
 
 
 class SeenStore:
@@ -202,17 +206,40 @@ class Monitor:
         self._providers: dict[str, Provider] = {}
         self.stats: dict[str, dict[str, Any]] = {}
 
-    def check_watch(self, watch: Watch) -> list[Slot]:
-        """Return the in-window slots currently offered for ``watch``."""
+    def check_watch(self, watch: Watch, today: date | None = None) -> list[Slot]:
+        """Return the bookable slots currently offered for ``watch``.
+
+        Slots dated before ``today`` (the monitor clock's date by default),
+        outside the watch's date window, or offering fewer seats than its
+        ``min_seats`` are left out.
+        """
         provider = self._providers.get(watch.provider)
         if provider is None:
             provider = get_provider(watch.provider)
             self._providers[watch.provider] = provider
+        if today is None:
+            today = self.clock().date()
+        earliest, latest = self._window(watch)
+        min_seats = self._min_seats(watch)
         slots = provider.fetch(watch)
         return sorted(
-            (slot for slot in slots if in_window(slot, self.config.earliest, self.config.latest)),
+            (
+                slot
+                for slot in slots
+                if slot.slot_date >= today
+                and in_window(slot, earliest, latest)
+                and slot.seats >= min_seats
+            ),
             key=lambda slot: (slot.slot_date, slot.slot_time or ""),
         )
+
+    def _window(self, watch: Watch) -> tuple[date | None, date | None]:
+        earliest = watch.earliest if watch.earliest is not None else self.config.earliest
+        latest = watch.latest if watch.latest is not None else self.config.latest
+        return earliest, latest
+
+    def _min_seats(self, watch: Watch) -> int:
+        return watch.min_seats if watch.min_seats is not None else self.config.min_seats
 
     def run_once(self) -> list[Alert]:
         """Poll every watch once and dispatch alerts for new slots.
@@ -227,12 +254,15 @@ class Monitor:
         failed_watch_labels: list[str] = []
         bootstrapping = self.bootstrap and self.state.cold
         now = self.clock()
+        # One cut-off for the whole cycle: slots before it are neither alerted
+        # on nor kept in state, so the filter and the prune can never disagree.
+        today = now.date()
         self._flush_pending(now, alerts)
         if bootstrapping:
             LOGGER.info("bootstrap run: recording current slots without slot alerts")
         for watch in self.config.watches:
             try:
-                slots = self.check_watch(watch)
+                slots = self.check_watch(watch, today=today)
             except ProviderError as exc:
                 challenge = isinstance(exc, ChallengeError)
                 LOGGER.warning(
@@ -259,7 +289,12 @@ class Monitor:
             fresh = [slot for slot in slots if slot.key not in self.state]
             previous = self._previous_slots(watch)
             current_keys = {slot.key for slot in slots}
-            disappeared = [slot for slot in previous if slot.key not in current_keys]
+            # Slots that merely expired did not disappear from the portal.
+            disappeared = [
+                slot
+                for slot in previous
+                if slot.key not in current_keys and slot.slot_date >= today
+            ]
             previous_best = self._best_date(watch)
             improved = (
                 [slot for slot in fresh if slot.slot_date < previous_best]
@@ -294,7 +329,7 @@ class Monitor:
             # Record fresh slots even when "new" alerts are disabled or held.
             self.state.add_slots(fresh, watch.label)
 
-        self.state.prune(available_keys, failed_watch_labels)
+        self.state.prune(available_keys, failed_watch_labels, today=today)
         self.state.cold = False
         self.failed_watches = failed_watch_labels
         self.stats = {
@@ -321,12 +356,98 @@ class Monitor:
         self.failed_watches = failed
         return all_alerts
 
-    def _dispatch(self, alert: Alert) -> None:
-        for notifier in self.notifiers:
+    @property
+    def pending_retries(self) -> int:
+        """How many alerts are waiting to be retried after a failed delivery."""
+        pending = self.state.meta.get("pending_alerts")
+        if not isinstance(pending, list):
+            return 0
+        return sum(
+            1 for item in pending if isinstance(item, dict) and "retry_notifiers" in item
+        )
+
+    def _notifier_ids(self) -> list[tuple[str, Notifier]]:
+        """Pair each notifier with a stable id that survives across runs."""
+        return [
+            (f"{index}:{notifier.name}", notifier)
+            for index, notifier in enumerate(self.notifiers)
+        ]
+
+    def _dispatch(
+        self, alert: Alert, targets: Collection[str] | None = None
+    ) -> tuple[int, list[str]]:
+        """Send ``alert`` to every notifier, or only to the ``targets`` ids.
+
+        Returns how many notifiers were tried and the ids of those that
+        failed, so the failures can be retried on a later cycle.
+        """
+        attempted = 0
+        failed: list[str] = []
+        for notifier_id, notifier in self._notifier_ids():
+            if targets is not None and notifier_id not in targets:
+                continue
+            attempted += 1
             try:
                 notifier.send(alert)
             except NotifierError as exc:
-                LOGGER.error("notifier %s failed: %s", notifier.name, exc)
+                failed.append(notifier_id)
+                LOGGER.error(
+                    "notifier %s failed: %s",
+                    notifier.name,
+                    exc,
+                    extra={"event": "notifier_error", "watch": alert.watch.label},
+                )
+        return attempted, failed
+
+    def _send(
+        self,
+        alert: Alert,
+        delivered: list[Alert],
+        targets: Collection[str] | None = None,
+        attempts: int = 0,
+    ) -> dict[str, Any] | None:
+        """Dispatch ``alert``; return a pending retry item if any notifier failed.
+
+        The alert counts as delivered when at least one notifier accepted it
+        (or none is configured).
+        """
+        attempted, failed = self._dispatch(alert, targets)
+        if attempted == 0 or len(failed) < attempted:
+            delivered.append(alert)
+        if not failed:
+            if attempts:
+                LOGGER.info(
+                    "delivered %s alert for %s on retry",
+                    alert.event_type,
+                    alert.watch.label,
+                    extra={"event": "alert_retried", "watch": alert.watch.label},
+                )
+            return None
+        attempts += 1
+        names = ", ".join(failed)
+        if attempts >= MAX_DELIVERY_ATTEMPTS:
+            LOGGER.error(
+                "giving up on %s alert for %s after %d attempt(s) to %s",
+                alert.event_type,
+                alert.watch.label,
+                attempts,
+                names,
+                extra={"event": "alert_dropped", "watch": alert.watch.label},
+            )
+            return None
+        LOGGER.warning(
+            "will retry %s alert for %s to %s next cycle (attempt %d of %d failed)",
+            alert.event_type,
+            alert.watch.label,
+            names,
+            attempts,
+            MAX_DELIVERY_ATTEMPTS,
+            extra={"event": "alert_retry", "watch": alert.watch.label},
+        )
+        item = self._serialize_alert(alert)
+        item["retry_notifiers"] = failed
+        item["attempts"] = attempts
+        return item
 
     def _health_records(self) -> dict[str, dict[str, Any]]:
         records = self.state.meta.setdefault("health", {})
@@ -581,19 +702,45 @@ class Monitor:
                 extra={"event": "alert_held", "watch": alert.watch.label},
             )
             return
-        self._dispatch(alert)
+        retry = self._send(alert, delivered)
         self._mark_dispatched(alert.watch, now)
-        delivered.append(alert)
+        if retry is not None:
+            self._pending().append(retry)
+            self.state.save()
 
     def _flush_pending(self, now: datetime, delivered: list[Alert]) -> None:
+        """Deliver held alerts and retry failed deliveries.
+
+        Held alerts wait for quiet hours and the throttle. Retries (items with
+        ``retry_notifiers``) wait only for quiet hours: their dispatch already
+        counted against the throttle, and they go only to the notifiers that
+        failed. Retries whose watch or notifiers are no longer configured are
+        dropped; held alerts for an unknown watch are kept until it returns.
+        """
         pending = list(self._pending())
         if not pending:
             return
         watches = {watch.label: watch for watch in self.config.watches}
+        known_ids = {notifier_id for notifier_id, _ in self._notifier_ids()}
         remaining: list[dict[str, Any]] = []
         for item in pending:
-            watch = watches.get(str(item.get("watch")))
-            if watch is None or self._is_quiet(watch, now) or not self._can_dispatch(watch, now):
+            label = str(item.get("watch"))
+            watch = watches.get(label)
+            retry_ids = item.get("retry_notifiers")
+            is_retry = retry_ids is not None
+            if watch is None and is_retry:
+                LOGGER.warning(
+                    "dropping %s alert retry for %s: its watch is no longer configured",
+                    item.get("event_type", "new"),
+                    label,
+                    extra={"event": "alert_dropped", "watch": label},
+                )
+                continue
+            if (
+                watch is None
+                or self._is_quiet(watch, now)
+                or (not is_retry and not self._can_dispatch(watch, now))
+            ):
                 remaining.append(item)
                 continue
             try:
@@ -613,10 +760,28 @@ class Monitor:
                     event_type=str(item.get("event_type", "new")),
                     message=item.get("message"),
                 )
+                attempts = int(item.get("attempts", 0))
             except (KeyError, TypeError, ValueError):
                 continue
-            self._dispatch(alert)
-            self._mark_dispatched(watch, now)
-            delivered.append(alert)
+            if not is_retry:
+                retry = self._send(alert, delivered)
+                self._mark_dispatched(watch, now)
+            else:
+                targets = (
+                    [str(target) for target in retry_ids if str(target) in known_ids]
+                    if isinstance(retry_ids, list)
+                    else []
+                )
+                if not targets:
+                    LOGGER.warning(
+                        "dropping %s alert retry for %s: its notifiers are no longer configured",
+                        alert.event_type,
+                        watch.label,
+                        extra={"event": "alert_dropped", "watch": watch.label},
+                    )
+                    continue
+                retry = self._send(alert, delivered, targets, attempts)
+            if retry is not None:
+                remaining.append(retry)
         self.state.meta["pending_alerts"] = remaining
         self.state.save()
