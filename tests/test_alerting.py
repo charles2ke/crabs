@@ -5,20 +5,26 @@ import json
 import logging
 import unittest
 from contextlib import redirect_stderr
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from openclaw.config import parse_config
 from openclaw.logging_utils import configure_logging
 from openclaw.monitor import Monitor
-from openclaw.notifiers import ConsoleNotifier
+from openclaw.notifiers import ConsoleNotifier, NotifierError
 from openclaw.providers.base import (
     ChallengeError,
     Provider,
     ProviderError,
     register_provider,
 )
+
+
+#: Future slot dates for tests that run on the real clock; tests that inject
+#: a clock use fixed dates relative to it instead.
+SOON = (date.today() + timedelta(days=30)).isoformat()
+LATER = (date.today() + timedelta(days=40)).isoformat()
 
 
 class Collector(ConsoleNotifier):
@@ -47,21 +53,21 @@ class ChangeEventTests(unittest.TestCase):
         collector = Collector()
         monitor = Monitor(
             config(
-                [{"date": "2026-10-20"}],
+                [{"date": LATER}],
                 alert_on=["new", "disappeared", "improved"],
             ),
             [collector],
         )
         monitor.run_once()
         monitor.config = config(
-            [{"date": "2026-10-10"}],
+            [{"date": SOON}],
             alert_on=["new", "disappeared", "improved"],
         )
         events = [alert.event_type for alert in monitor.run_once()]
         self.assertEqual(events, ["new", "disappeared", "improved"])
 
     def test_default_remains_new_only(self):
-        monitor = Monitor(config([{"date": "2026-10-20"}]), [])
+        monitor = Monitor(config([{"date": SOON}]), [])
         self.assertEqual([a.event_type for a in monitor.run_once()], ["new"])
         monitor.config = config([])
         self.assertEqual(monitor.run_once(), [])
@@ -120,6 +126,39 @@ class DeliveryPolicyTests(unittest.TestCase):
         self.assertEqual(len(monitor.run_once()), 1)
         history = monitor.state.meta["alert_history"][monitor.config.watches[0].label]
         self.assertEqual(len(history), 1)
+
+    def test_retry_waits_for_quiet_hours_but_not_the_throttle(self):
+        current = [datetime(2026, 9, 3, 21, 0, tzinfo=timezone.utc)]
+
+        class Flaky(Collector):
+            name = "flaky"
+            fail = True
+
+            def send(self, alert):
+                if self.fail:
+                    raise NotifierError("boom")
+                super().send(alert)
+
+        flaky = Flaky()
+        monitor = Monitor(
+            config(
+                [{"date": "2026-10-20"}],
+                quiet_hours={"start": "22:00", "end": "07:00", "timezone": "UTC"},
+                throttle={"minimum_gap_seconds": 86400},
+            ),
+            [flaky],
+            clock=lambda: current[0],
+        )
+        with self.assertLogs("openclaw", level="ERROR"):
+            self.assertEqual(monitor.run_once(), [])
+        flaky.fail = False
+        current[0] = datetime(2026, 9, 3, 23, 0, tzinfo=timezone.utc)
+        self.assertEqual(monitor.run_once(), [])
+        self.assertEqual(flaky.alerts, [])
+        # Still inside the 24 h minimum gap, but a retry is not throttled twice.
+        current[0] = datetime(2026, 9, 4, 7, 1, tzinfo=timezone.utc)
+        self.assertEqual(len(monitor.run_once()), 1)
+        self.assertEqual(len(flaky.alerts), 1)
 
 
 class HealthTests(unittest.TestCase):

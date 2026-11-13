@@ -1,6 +1,6 @@
 import json
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from openclaw.config import parse_config
 from openclaw.models import Alert, Slot, Watch
@@ -125,6 +125,20 @@ class TelegramNotifierTests(unittest.TestCase):
         for day in range(10, 16):
             self.assertEqual(combined.count(f"2026-09-{day}"), 1)
 
+    def test_formats_test_alert_as_single_message(self):
+        alert = Alert(
+            watch=Watch("IE", "FR", "Dublin"),
+            slots=(),
+            created_at=datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc),
+            event_type="test",
+            message="notifications <work>",
+        )
+        messages = TelegramNotifier(TOKEN, "chat-1")._format_messages(alert)
+
+        self.assertEqual(len(messages), 1)
+        self.assertTrue(messages[0].startswith("<b>Open Claw test alert</b>"))
+        self.assertIn("notifications &lt;work&gt;", messages[0])
+
     def test_redacts_token_in_helper_and_delivery_errors(self):
         raw = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         self.assertEqual(
@@ -151,7 +165,11 @@ class TelegramNotifierTests(unittest.TestCase):
                         "country_from": "IE",
                         "country_to": "FR",
                         "city": "Dublin",
-                        "options": {"slots": [{"date": "2026-09-14"}]},
+                        "options": {
+                            "slots": [
+                                {"date": (date.today() + timedelta(days=30)).isoformat()}
+                            ]
+                        },
                     }
                 ]
             }

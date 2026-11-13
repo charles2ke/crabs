@@ -27,6 +27,17 @@ TELEGRAM_MESSAGE_LIMIT = 4096
 MAX_TELEGRAM_RETRY_AFTER = 60.0
 SLACK_BLOCK_TEXT_LIMIT = 3000
 DISCORD_EMBED_DESCRIPTION_LIMIT = 4096
+NTFY_DEFAULT_SERVER = "https://ntfy.sh"
+#: ntfy turns longer message bodies into attachments.
+NTFY_MESSAGE_LIMIT_BYTES = 4096
+#: ntfy rejects requests whose title exceeds 1 KB or whose tags exceed 512 bytes.
+NTFY_TITLE_LIMIT_BYTES = 1000
+NTFY_TAGS_LIMIT_BYTES = 512
+NTFY_PRIORITIES = {"min": 1, "low": 2, "default": 3, "high": 4, "max": 5, "urgent": 5}
+PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json"
+PUSHOVER_MESSAGE_LIMIT = 1024
+PUSHOVER_TITLE_LIMIT = 250
+PUSHOVER_URL_LIMIT = 512
 _TELEGRAM_BOT_TOKEN_PATTERN = re.compile(r"bot[0-9]+:[A-Za-z0-9_-]+")
 
 
@@ -79,8 +90,13 @@ def _post_json(
         raise NotifierError(f"{label} delivery failed: {exc}") from exc
 
 
-def _fit_lines(header: str, lines: Sequence[str], limit: int) -> str:
-    """Join ``header`` and ``lines`` within ``limit`` characters.
+def _fit_lines(
+    header: str,
+    lines: Sequence[str],
+    limit: int,
+    measure: Callable[[str], int] = len,
+) -> str:
+    """Join ``header`` and ``lines`` within ``limit`` as counted by ``measure``.
 
     Slot lines that do not fit are replaced with a summary of how many were
     omitted, so real portals with hundreds of slots never break delivery.
@@ -90,11 +106,34 @@ def _fit_lines(header: str, lines: Sequence[str], limit: int) -> str:
         remaining = len(lines) - index
         candidate = f"{text}\n{line}"
         overflow = f"\n… and {remaining} more slot(s)"
-        if len(candidate) + (len(overflow) if remaining > 1 else 0) > limit:
+        if measure(candidate) + (measure(overflow) if remaining > 1 else 0) > limit:
             truncated = f"{text}\n… and {remaining} more slot(s)"
-            return truncated if len(truncated) <= limit else text[:limit]
+            return truncated if measure(truncated) <= limit else _clip(text, limit, measure)
         text = candidate
     return text
+
+
+def _clip(text: str, limit: int, measure: Callable[[str], int] = len) -> str:
+    """Cut ``text`` on a character boundary to at most ``limit`` units."""
+    end = min(len(text), limit)
+    while end > 0 and measure(text[:end]) > limit:
+        end -= 1
+    return text[:end]
+
+
+def _utf8_len(text: str) -> int:
+    return len(text.encode("utf-8"))
+
+
+def _first_booking_url(alert: Alert) -> str | None:
+    return next((slot.booking_url for slot in alert.slots if slot.booking_url), None)
+
+
+def _plain_slot_line(slot: Slot) -> str:
+    when = slot.slot_date.isoformat()
+    if slot.slot_time:
+        when = f"{when} {slot.slot_time}"
+    return f"• {when} — {slot.seats} seat(s)"
 
 
 class Notifier(abc.ABC):
@@ -286,6 +325,8 @@ class TelegramNotifier(Notifier):
         visa_category = html.escape(str(alert.watch.visa_category or ""))
         if alert.event_type == "health":
             heading = "<b>Provider health warning</b>"
+        elif alert.event_type == "test":
+            heading = "<b>Open Claw test alert</b>"
         else:
             event = html.escape(alert.event_type)
             heading = f"<b>{count} {event} Schengen slot(s){suffix}</b>"
@@ -443,6 +484,8 @@ class SlackNotifier(Notifier):
     def _summary(alert: Alert) -> str:
         if alert.event_type == "health":
             return f"Provider health warning for {alert.watch.label}"
+        if alert.event_type == "test":
+            return f"Open Claw test alert for {alert.watch.label}"
         return (
             f"{len(alert.slots)} {alert.event_type} Schengen slot(s) for "
             f"{alert.watch.label}"
@@ -583,6 +626,185 @@ class EmailNotifier(Notifier):
             raise NotifierError(f"email delivery failed: {exc}") from exc
 
 
+class NtfyNotifier(Notifier):
+    """Publish alerts to an ntfy topic on ntfy.sh or a self-hosted server.
+
+    Alerts are published as JSON to the server root, so neither the topic nor
+    the optional access token ever appears in a request URL or error message.
+    """
+
+    name = "ntfy"
+
+    def __init__(
+        self,
+        topic: str,
+        *,
+        server: str = NTFY_DEFAULT_SERVER,
+        token: str | None = None,
+        priority: int | str = "default",
+        tags: Sequence[str] | None = None,
+        timeout: float = DEFAULT_TIMEOUT,
+    ) -> None:
+        if not topic:
+            raise NotifierError("ntfy notifier requires a 'topic'")
+        self.topic = str(topic)
+        self.url = _validate_http_url(server, "ntfy server").rstrip("/") + "/"
+        self.token = token or None
+        self.priority = _ntfy_priority(priority)
+        tags = [] if tags is None else tags
+        if isinstance(tags, str) or not all(isinstance(tag, str) for tag in tags):
+            raise NotifierError("ntfy 'tags' must be a list of strings")
+        if _utf8_len(",".join(tags)) > NTFY_TAGS_LIMIT_BYTES:
+            raise NotifierError(
+                f"ntfy 'tags' must be at most {NTFY_TAGS_LIMIT_BYTES} bytes combined"
+            )
+        self.tags = list(tags)
+        self.timeout = _validate_timeout(timeout, "ntfy")
+
+    def send(self, alert: Alert) -> None:
+        title = _clip(SlackNotifier._summary(alert), NTFY_TITLE_LIMIT_BYTES, _utf8_len)
+        message = _fit_lines(
+            alert.message or "",
+            [_plain_slot_line(slot) for slot in alert.slots],
+            NTFY_MESSAGE_LIMIT_BYTES,
+            _utf8_len,
+        ).strip()
+        payload: dict[str, Any] = {
+            "topic": self.topic,
+            "title": title,
+            "message": message or title,
+            "priority": self.priority,
+        }
+        if self.tags:
+            payload["tags"] = self.tags
+        click = _first_booking_url(alert)
+        if click:
+            payload["click"] = click
+        headers = {"Authorization": f"Bearer {self.token}"} if self.token else None
+        _post_json(self.url, payload, self.timeout, "ntfy", headers)
+
+
+def _ntfy_priority(value: Any) -> int:
+    if isinstance(value, str) and value.strip().lower() in NTFY_PRIORITIES:
+        return NTFY_PRIORITIES[value.strip().lower()]
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 5:
+        return value
+    raise NotifierError(
+        "ntfy priority must be 1-5 or one of: " + ", ".join(NTFY_PRIORITIES)
+    )
+
+
+class PushoverNotifier(Notifier):
+    """Send alerts through the Pushover messages API."""
+
+    name = "pushover"
+
+    def __init__(
+        self,
+        token: str,
+        user: str,
+        *,
+        device: str | None = None,
+        priority: int = 0,
+        sound: str | None = None,
+        retry: int = 60,
+        expire: int = 3600,
+        timeout: float = DEFAULT_TIMEOUT,
+    ) -> None:
+        if not token:
+            raise NotifierError("pushover notifier requires a 'token'")
+        if not user:
+            raise NotifierError("pushover notifier requires a 'user'")
+        self.token = str(token)
+        self.user = str(user)
+        self.device = device
+        self.priority = _int_setting(priority, "pushover priority", -2, 2)
+        self.sound = sound
+        # Only used by emergency priority (2), which repeats until acknowledged.
+        self.retry = _int_setting(retry, "pushover retry", 30, 10800)
+        self.expire = _int_setting(expire, "pushover expire", 1, 10800)
+        self.timeout = _validate_timeout(timeout, "pushover")
+
+    def send(self, alert: Alert) -> None:
+        title = _clip(SlackNotifier._summary(alert), PUSHOVER_TITLE_LIMIT)
+        message = _fit_lines(
+            alert.message or "",
+            [_plain_slot_line(slot) for slot in alert.slots],
+            PUSHOVER_MESSAGE_LIMIT,
+        ).strip()
+        fields: dict[str, str] = {
+            "token": self.token,
+            "user": self.user,
+            "title": title,
+            "message": message or title,
+            "priority": str(self.priority),
+            "timestamp": str(int(alert.created_at.timestamp())),
+        }
+        url = _first_booking_url(alert)
+        if url and len(url) <= PUSHOVER_URL_LIMIT:
+            fields["url"] = url
+            fields["url_title"] = "Open booking page"
+        if self.device:
+            fields["device"] = self.device
+        if self.sound:
+            fields["sound"] = self.sound
+        if self.priority == 2:
+            fields["retry"] = str(self.retry)
+            fields["expire"] = str(self.expire)
+        self._post(fields)
+
+    def _post(self, fields: Mapping[str, str]) -> None:
+        request = urllib.request.Request(
+            PUSHOVER_API_URL,
+            data=urllib.parse.urlencode(fields).encode("utf-8"),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        try:
+            with urllib.request.urlopen(  # noqa: S310 - fixed HTTPS API URL
+                request, timeout=self.timeout
+            ) as response:
+                status = response.getcode()
+                raw = response.read(4096)
+        except urllib.error.HTTPError as exc:
+            # Pushover explains rejected requests in the JSON error body.
+            status = exc.code
+            try:
+                raw = exc.read(4096)
+            except OSError:
+                raw = b""
+            finally:
+                exc.close()
+        except (urllib.error.URLError, OSError) as exc:
+            raise NotifierError(self._redact(f"pushover delivery failed: {exc}")) from exc
+        try:
+            result = json.loads(raw.decode("utf-8")) if raw else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            result = {}
+        if not isinstance(result, dict):
+            result = {}
+        if 200 <= status < 300 and result.get("status") == 1:
+            return
+        errors = result.get("errors")
+        detail = (
+            "; ".join(str(error) for error in errors)
+            if isinstance(errors, list) and errors
+            else "unexpected response"
+        )
+        raise NotifierError(
+            self._redact(f"pushover delivery failed: HTTP {status}: {detail}")
+        )
+
+    def _redact(self, text: str) -> str:
+        return text.replace(self.token, "<redacted>").replace(self.user, "<redacted>")
+
+
+def _int_setting(value: Any, label: str, minimum: int, maximum: int) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        if minimum <= value <= maximum:
+            return int(value)
+    raise NotifierError(f"{label} must be an integer from {minimum} to {maximum}")
+
+
 def build_notifier(spec: Mapping[str, Any]) -> Notifier:
     """Create a notifier from a config mapping such as ``{"type": "console"}``."""
     kind = str(spec.get("type", "console")).lower()
@@ -649,6 +871,29 @@ def build_notifier(spec: Mapping[str, Any]) -> Notifier:
             use_tls=None if raw_use_tls is None else bool(raw_use_tls),
             use_ssl=bool(spec.get("use_ssl", False)),
             subject_prefix=str(spec.get("subject_prefix", "[Open Claw]")),
+            timeout=spec.get("timeout", DEFAULT_TIMEOUT),
+        )
+    if kind == NtfyNotifier.name:
+        tags = spec.get("tags")
+        if tags is not None and not isinstance(tags, list):
+            raise NotifierError("ntfy 'tags' must be a list of strings")
+        return NtfyNotifier(
+            str(spec.get("topic") or ""),
+            server=str(spec.get("server") or NTFY_DEFAULT_SERVER),
+            token=_optional_str(spec.get("token")),
+            priority=spec.get("priority", "default"),
+            tags=tags,
+            timeout=spec.get("timeout", DEFAULT_TIMEOUT),
+        )
+    if kind == PushoverNotifier.name:
+        return PushoverNotifier(
+            str(spec.get("token") or ""),
+            str(spec.get("user") or ""),
+            device=_optional_str(spec.get("device")),
+            priority=spec.get("priority", 0),
+            sound=_optional_str(spec.get("sound")),
+            retry=spec.get("retry", 60),
+            expire=spec.get("expire", 3600),
             timeout=spec.get("timeout", DEFAULT_TIMEOUT),
         )
     raise NotifierError(f"unknown notifier type {kind!r}")

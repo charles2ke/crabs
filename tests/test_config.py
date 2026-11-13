@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 
 from openclaw.config import ConfigError, load_config, parse_config
 from openclaw.models import Slot, Watch
+from openclaw.notifiers import build_notifier
 
 PW = "pass" + "word"
 
@@ -39,6 +40,47 @@ class ConfigTests(unittest.TestCase):
     def test_rejects_inverted_window(self):
         with self.assertRaises(ConfigError):
             parse_config({**BASE, "earliest": "2026-12-31", "latest": "2026-09-01"})
+
+    def test_watch_filters_default_to_inherit(self):
+        config = parse_config(BASE)
+        self.assertEqual(config.min_seats, 1)
+        watch = config.watches[0]
+        self.assertEqual((watch.earliest, watch.latest, watch.min_seats), (None, None, None))
+
+    def test_watch_filters(self):
+        watch = {**BASE["watches"][0], "earliest": "2026-10-01", "min_seats": 2}
+        config = parse_config(
+            {"watches": [watch], "latest": "2026-12-31", "min_seats": 3}
+        )
+        self.assertEqual(config.min_seats, 3)
+        parsed = config.watches[0]
+        self.assertEqual(parsed.earliest, date(2026, 10, 1))
+        self.assertIsNone(parsed.latest)
+        self.assertEqual(parsed.min_seats, 2)
+
+    def test_rejects_empty_effective_watch_window(self):
+        for top, watch in (
+            ({}, {"earliest": "2026-12-31", "latest": "2026-09-01"}),
+            ({"latest": "2026-09-30"}, {"earliest": "2026-10-01"}),
+            ({"earliest": "2026-10-01"}, {"latest": "2026-09-30"}),
+        ):
+            with self.subTest(top=top, watch=watch), self.assertRaisesRegex(
+                ConfigError, "empty date window"
+            ):
+                parse_config({**top, "watches": [{**BASE["watches"][0], **watch}]})
+        with self.assertRaisesRegex(ConfigError, "watch 'earliest'"):
+            parse_config({"watches": [{**BASE["watches"][0], "earliest": "01/10/2026"}]})
+
+    def test_min_seats_validation(self):
+        self.assertEqual(parse_config({**BASE, "min_seats": 2.0}).min_seats, 2)
+        for value in (0, -1, 1.5, True, "many", [], float("inf"), float("nan")):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ConfigError, "'min_seats' must be a positive"):
+                    parse_config({**BASE, "min_seats": value})
+                with self.assertRaisesRegex(ConfigError, "watch 'min_seats'"):
+                    parse_config(
+                        {"watches": [{**BASE["watches"][0], "min_seats": value}]}
+                    )
 
     def test_rejects_missing_watches(self):
         with self.assertRaises(ConfigError):
@@ -185,6 +227,24 @@ class ConfigTests(unittest.TestCase):
                     }
                 )
 
+    def test_ntfy_and_pushover_secrets_must_use_env_placeholders(self):
+        def notifier(spec):
+            return {**BASE, "notifiers": [spec]}
+
+        with self.assertRaisesRegex(ConfigError, "ntfy notifier requires 'topic'"):
+            parse_config(notifier({"type": "ntfy"}))
+        for token in ("tk_literal", 123):
+            with self.subTest(token=token), self.assertRaisesRegex(ConfigError, "ntfy token"):
+                parse_config(notifier({"type": "ntfy", "topic": "alerts", "token": token}))
+        # Like a Telegram chat id, the topic is not forced into the environment.
+        parse_config(notifier({"type": "ntfy", "topic": "alerts"}))
+
+        with self.assertRaisesRegex(ConfigError, "pushover notifier requires 'user'"):
+            parse_config(notifier({"type": "pushover", "token": "${OPENCLAW_PUSHOVER_TOKEN}"}))
+        for token in ("a" * 30, 123):
+            with self.subTest(token=token), self.assertRaisesRegex(ConfigError, "pushover token"):
+                parse_config(notifier({"type": "pushover", "token": token, "user": "u" * 30}))
+
     def test_load_integration_examples(self):
         import os
 
@@ -194,6 +254,11 @@ class ConfigTests(unittest.TestCase):
             "dublin_email.json": {
                 "OPENCLAW_SMTP_USERNAME": "user",
                 "OPENCLAW_SMTP_PASSWORD": "secret",
+            },
+            "dublin_ntfy.json": {"OPENCLAW_NTFY_TOPIC": "openclaw-test-topic"},
+            "dublin_pushover.json": {
+                "OPENCLAW_PUSHOVER_TOKEN": "a" * 30,
+                "OPENCLAW_PUSHOVER_USER": "u" * 30,
             },
         }
         for name, env in examples.items():
@@ -208,6 +273,7 @@ class ConfigTests(unittest.TestCase):
                         del os.environ[key]
                 self.assertEqual(len(config.notifiers), 1)
                 self.assertEqual(len(config.watches), 1)
+                build_notifier(config.notifiers[0])
 
     def test_load_dublin_example(self):
         config = load_config(Path(__file__).resolve().parents[1] / "examples" / "dublin.json")

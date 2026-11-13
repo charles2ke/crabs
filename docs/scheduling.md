@@ -9,7 +9,8 @@ openclaw --config /etc/openclaw/dublin.json \
 
 Writes use temp-file `fsync` plus atomic replacement. A neighboring `.lock` file
 prevents overlap, and past appointment entries are pruned. `--bootstrap` only
-suppresses the first cold run.
+suppresses the first cold run. Alerts a notifier failed to deliver are retried
+from the state file on later runs, so keep the state file between runs.
 
 ## GitHub Actions
 
