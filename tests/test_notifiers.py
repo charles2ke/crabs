@@ -1,10 +1,11 @@
-"""Offline tests for the console, file, webhook, Slack, Discord, and email notifiers."""
+"""Offline tests for the console, file, webhook, Slack, Discord, email, ntfy, and Pushover notifiers."""
 
 import io
 import json
 import smtplib
 import unittest
 import urllib.error
+import urllib.parse
 from datetime import date, datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,12 +13,17 @@ from unittest.mock import patch
 
 from openclaw.models import Alert, Slot, Watch
 from openclaw.notifiers import (
+    NTFY_MESSAGE_LIMIT_BYTES,
+    PUSHOVER_API_URL,
+    PUSHOVER_MESSAGE_LIMIT,
     SLACK_BLOCK_TEXT_LIMIT,
     ConsoleNotifier,
     DiscordNotifier,
     EmailNotifier,
     FileNotifier,
     NotifierError,
+    NtfyNotifier,
+    PushoverNotifier,
     SlackNotifier,
     WebhookNotifier,
     build_notifier,
@@ -50,6 +56,24 @@ class FakeResponse:
 
     def read(self, _limit):
         return b"ok"
+
+
+class JsonResponse(FakeResponse):
+    def __init__(self, body, status=200):
+        super().__init__(status)
+        self.body = json.dumps(body).encode("utf-8")
+
+    def read(self, _limit):
+        return self.body
+
+
+def many_slots_alert() -> Alert:
+    watch = Watch("IE", "FR", "Dublin")
+    slots = tuple(
+        Slot(watch, date(2026, 9, 14), f"{minute // 60:02d}:{minute % 60:02d}", None, 1)
+        for minute in range(0, 1440, 5)
+    )
+    return Alert(watch, slots, datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc))
 
 
 class OriginalNotifierTests(unittest.TestCase):
@@ -134,6 +158,22 @@ class SlackNotifierTests(unittest.TestCase):
         payload = json.loads(urlopen.call_args.args[0].data)
         self.assertIn("Provider health warning", payload["text"])
         self.assertIn("provider is stale", payload["blocks"][0]["text"]["text"])
+
+    def test_test_alert_summary(self):
+        alert = Alert(
+            Watch("IE", "FR", "Dublin"),
+            (),
+            datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc),
+            event_type="test",
+            message="notifications are working",
+        )
+        with patch("urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
+            SlackNotifier("https://hooks.slack.invalid/x").send(alert)
+        payload = json.loads(urlopen.call_args.args[0].data)
+        self.assertEqual(
+            payload["text"], "Open Claw test alert for FR consulate in Dublin, IE (short-stay)"
+        )
+        self.assertIn("notifications are working", payload["blocks"][0]["text"]["text"])
 
     def test_long_digests_are_truncated_within_block_limit(self):
         watch = Watch("IE", "FR", "Dublin")
@@ -292,6 +332,176 @@ class EmailNotifierTests(unittest.TestCase):
             notifier.send(make_alert())
 
 
+class NtfyNotifierTests(unittest.TestCase):
+    def test_publishes_json_to_server_root_with_bearer_token(self):
+        with patch("urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
+            NtfyNotifier(
+                "secret-topic",
+                server="https://ntfy.example.invalid/",
+                token="tk_unit",
+                priority="high",
+                tags=["passport_control"],
+                timeout=9,
+            ).send(make_alert())
+        request = urlopen.call_args.args[0]
+        payload = json.loads(request.data)
+        self.assertEqual(request.full_url, "https://ntfy.example.invalid/")
+        self.assertEqual(request.get_header("Authorization"), "Bearer tk_unit")
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 9)
+        self.assertEqual(payload["topic"], "secret-topic")
+        self.assertEqual(payload["priority"], 4)
+        self.assertEqual(payload["tags"], ["passport_control"])
+        self.assertEqual(payload["click"], "https://book.invalid")
+        self.assertIn("1 new Schengen slot(s)", payload["title"])
+        self.assertIn("• 2026-09-14 09:20 — 2 seat(s)", payload["message"])
+
+    def test_defaults_omit_optional_fields(self):
+        alert = Alert(
+            Watch("IE", "FR", "Dublin"),
+            (),
+            datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc),
+            event_type="test",
+            message="notifications are working",
+        )
+        with patch("urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
+            NtfyNotifier("alerts").send(alert)
+        request = urlopen.call_args.args[0]
+        payload = json.loads(request.data)
+        self.assertEqual(request.full_url, "https://ntfy.sh/")
+        self.assertIsNone(request.get_header("Authorization"))
+        self.assertEqual(payload["priority"], 3)
+        self.assertEqual(payload["message"], "notifications are working")
+        self.assertNotIn("tags", payload)
+        self.assertNotIn("click", payload)
+
+    def test_long_digest_fits_the_byte_limit(self):
+        with patch("urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
+            NtfyNotifier("alerts").send(many_slots_alert())
+        message = json.loads(urlopen.call_args.args[0].data)["message"]
+        # Slot lines contain multi-byte "•" and "—", so a character count would overshoot.
+        self.assertLessEqual(len(message.encode("utf-8")), NTFY_MESSAGE_LIMIT_BYTES)
+        self.assertIn("more slot(s)", message)
+
+    def test_validates_settings(self):
+        self.assertEqual(NtfyNotifier("t", priority="URGENT").priority, 5)
+        self.assertEqual(NtfyNotifier("t", priority=2).priority, 2)
+        for kwargs in (
+            {"priority": 0},
+            {"priority": 6},
+            {"priority": True},
+            {"priority": "loud"},
+            {"tags": "passport_control"},
+            {"tags": [1]},
+            {"tags": ["x" * 513]},
+            {"server": "ftp://ntfy.example.invalid"},
+            {"timeout": 0},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(NotifierError):
+                NtfyNotifier("t", **kwargs)
+        with self.assertRaises(NotifierError):
+            NtfyNotifier("")
+
+
+class PushoverNotifierTests(unittest.TestCase):
+    TOKEN = "a" * 30
+    USER = "u" * 30
+
+    def fields(self, urlopen):
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, PUSHOVER_API_URL)
+        self.assertEqual(
+            request.get_header("Content-type"), "application/x-www-form-urlencoded"
+        )
+        return dict(urllib.parse.parse_qsl(request.data.decode("utf-8")))
+
+    def test_posts_form_with_booking_link(self):
+        with patch(
+            "urllib.request.urlopen", return_value=JsonResponse({"status": 1})
+        ) as urlopen:
+            PushoverNotifier(
+                self.TOKEN, self.USER, priority=1, sound="siren", device="phone", timeout=9
+            ).send(make_alert())
+        fields = self.fields(urlopen)
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 9)
+        self.assertEqual(fields["token"], self.TOKEN)
+        self.assertEqual(fields["user"], self.USER)
+        self.assertEqual(fields["priority"], "1")
+        self.assertEqual(fields["sound"], "siren")
+        self.assertEqual(fields["device"], "phone")
+        self.assertEqual(fields["url"], "https://book.invalid")
+        self.assertEqual(
+            fields["timestamp"],
+            str(int(datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc).timestamp())),
+        )
+        self.assertIn("1 new Schengen slot(s)", fields["title"])
+        self.assertIn("• 2026-09-14 09:20 — 2 seat(s)", fields["message"])
+        self.assertNotIn("retry", fields)
+
+    def test_emergency_priority_sends_retry_and_expire(self):
+        with patch(
+            "urllib.request.urlopen", return_value=JsonResponse({"status": 1})
+        ) as urlopen:
+            PushoverNotifier(self.TOKEN, self.USER, priority=2, retry=120, expire=600).send(
+                make_alert()
+            )
+        fields = self.fields(urlopen)
+        self.assertEqual((fields["retry"], fields["expire"]), ("120", "600"))
+
+    def test_long_digest_and_url_fit_api_limits(self):
+        watch = Watch("IE", "FR", "Dublin")
+        alert = many_slots_alert()
+        alert = Alert(
+            watch,
+            (Slot(watch, date(2026, 9, 14), None, "https://book.invalid/" + "x" * 600, 1),)
+            + alert.slots,
+            alert.created_at,
+        )
+        with patch(
+            "urllib.request.urlopen", return_value=JsonResponse({"status": 1})
+        ) as urlopen:
+            PushoverNotifier(self.TOKEN, self.USER).send(alert)
+        fields = self.fields(urlopen)
+        self.assertLessEqual(len(fields["message"]), PUSHOVER_MESSAGE_LIMIT)
+        self.assertIn("more slot(s)", fields["message"])
+        self.assertNotIn("url", fields)
+
+    def test_rejected_request_reports_api_errors_without_secrets(self):
+        body = {"status": 0, "errors": [f"application token {self.TOKEN} is invalid"]}
+        error = urllib.error.HTTPError(
+            PUSHOVER_API_URL, 400, "Bad Request", {}, io.BytesIO(json.dumps(body).encode())
+        )
+        with patch("urllib.request.urlopen", side_effect=error):
+            with self.assertRaises(NotifierError) as caught:
+                PushoverNotifier(self.TOKEN, self.USER).send(make_alert())
+        message = str(caught.exception)
+        self.assertIn("pushover delivery failed: HTTP 400: application token", message)
+        self.assertNotIn(self.TOKEN, message)
+
+    def test_unexpected_responses_are_errors(self):
+        for response in (JsonResponse({"status": 0}), FakeResponse()):
+            with self.subTest(response=response):
+                with patch("urllib.request.urlopen", return_value=response):
+                    with self.assertRaisesRegex(NotifierError, "unexpected response"):
+                        PushoverNotifier(self.TOKEN, self.USER).send(make_alert())
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("boom")):
+            with self.assertRaisesRegex(NotifierError, "pushover delivery failed"):
+                PushoverNotifier(self.TOKEN, self.USER).send(make_alert())
+
+    def test_validates_settings(self):
+        for args, kwargs in (
+            (("", self.USER), {}),
+            ((self.TOKEN, ""), {}),
+            ((self.TOKEN, self.USER), {"priority": 3}),
+            ((self.TOKEN, self.USER), {"priority": True}),
+            ((self.TOKEN, self.USER), {"priority": "1"}),
+            ((self.TOKEN, self.USER), {"retry": 29}),
+            ((self.TOKEN, self.USER), {"expire": 10801}),
+            ((self.TOKEN, self.USER), {"timeout": 0}),
+        ):
+            with self.subTest(args=args, kwargs=kwargs), self.assertRaises(NotifierError):
+                PushoverNotifier(*args, **kwargs)
+
+
 class BuildNotifierTests(unittest.TestCase):
     def test_builds_new_integrations(self):
         slack = build_notifier(
@@ -312,6 +522,13 @@ class BuildNotifierTests(unittest.TestCase):
         self.assertIsInstance(discord, DiscordNotifier)
         self.assertIsInstance(email, EmailNotifier)
         self.assertEqual(email.recipients, ("applicant@example.invalid",))
+        ntfy = build_notifier(
+            {"type": "ntfy", "topic": "alerts", "priority": "max", "tags": ["calendar"]}
+        )
+        self.assertIsInstance(ntfy, NtfyNotifier)
+        self.assertEqual((ntfy.priority, ntfy.tags), (5, ["calendar"]))
+        pushover = build_notifier({"type": "pushover", "token": "a" * 30, "user": "u" * 30})
+        self.assertIsInstance(pushover, PushoverNotifier)
 
     def test_build_email_use_ssl_disables_starttls_by_default(self):
         for spec in ({"use_ssl": True}, {"use_ssl": True, "use_tls": None}):
@@ -335,6 +552,9 @@ class BuildNotifierTests(unittest.TestCase):
             {"type": "discord"},
             {"type": "email", "host": "smtp.invalid"},
             {"type": "email", "host": "smtp.invalid", "sender": "a@b.invalid", "recipients": {}},
+            {"type": "ntfy"},
+            {"type": "ntfy", "topic": "alerts", "tags": "calendar"},
+            {"type": "pushover", "token": "a" * 30},
         ):
             with self.subTest(spec=spec), self.assertRaises(NotifierError):
                 build_notifier(spec)

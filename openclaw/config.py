@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -37,6 +38,8 @@ class Config:
     quiet_hours: Mapping[str, Any] | None = None
     throttle: Mapping[str, Any] = field(default_factory=dict)
     health: Mapping[str, Any] = field(default_factory=dict)
+    #: Slots offering fewer seats than this are ignored (per-watch overridable).
+    min_seats: int = 1
 
 
 def missing_env_vars(value: Any) -> tuple[str, ...]:
@@ -82,6 +85,27 @@ def _parse_date(raw: Any, label: str) -> date | None:
         return datetime.strptime(str(raw), "%Y-%m-%d").date()
     except ValueError as exc:
         raise ConfigError(f"invalid {label} date {raw!r}: expected YYYY-MM-DD") from exc
+
+
+def _parse_min_seats(raw: Any, label: str) -> int | None:
+    if raw is None:
+        return None
+    message = f"{label} must be a positive integer"
+    if isinstance(raw, bool):
+        raise ConfigError(message)
+    if isinstance(raw, int):
+        value = raw
+    else:
+        try:
+            number = float(raw)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ConfigError(message) from exc
+        if not math.isfinite(number) or not number.is_integer():
+            raise ConfigError(message)
+        value = int(number)
+    if value < 1:
+        raise ConfigError(message)
+    return value
 
 
 def _require_env_secret(value: Any, label: str) -> None:
@@ -178,6 +202,24 @@ def _validate_notifier_secrets(notifiers: Any) -> None:
                     "email password must be a string containing a ${ENV_VAR} placeholder"
                 )
             _require_env_secret(password, "email password")
+        elif kind == "ntfy":
+            if not spec.get("topic"):
+                raise ConfigError("ntfy notifier requires 'topic'")
+            token = spec.get("token")
+            if token is not None and not isinstance(token, str):
+                raise ConfigError(
+                    "ntfy token must be a string containing a ${ENV_VAR} placeholder"
+                )
+            _require_env_secret(token, "ntfy token")
+        elif kind == "pushover":
+            for key in ("token", "user"):
+                if not spec.get(key):
+                    raise ConfigError(f"pushover notifier requires '{key}'")
+            if not isinstance(spec.get("token"), str):
+                raise ConfigError(
+                    "pushover token must be a string containing a ${ENV_VAR} placeholder"
+                )
+            _require_env_secret(spec.get("token"), "pushover token")
 
 
 def _parse_clock(raw: Any, label: str) -> None:
@@ -250,6 +292,12 @@ def parse_config(data: Mapping[str, Any]) -> Config:
     if not isinstance(raw_watches, list):  # pragma: no cover - validated above
         raise ConfigError("configuration needs a non-empty 'watches' list")
 
+    earliest = _parse_date(data.get("earliest"), "earliest")
+    latest = _parse_date(data.get("latest"), "latest")
+    if earliest and latest and earliest > latest:
+        raise ConfigError("'earliest' must not be after 'latest'")
+    global_min_seats = _parse_min_seats(data.get("min_seats"), "'min_seats'")
+
     watches: list[Watch] = []
     for entry in raw_watches:
         if not isinstance(entry, Mapping):
@@ -268,6 +316,15 @@ def parse_config(data: Mapping[str, Any]) -> Config:
         if invalid_events:
             raise ConfigError(
                 "watch 'alert_on' has unknown events: " + ", ".join(sorted(invalid_events))
+            )
+        watch_earliest = _parse_date(entry.get("earliest"), "watch 'earliest'")
+        watch_latest = _parse_date(entry.get("latest"), "watch 'latest'")
+        effective_earliest = watch_earliest or earliest
+        effective_latest = watch_latest or latest
+        if effective_earliest and effective_latest and effective_earliest > effective_latest:
+            raise ConfigError(
+                f"watch for {entry['city']} has an empty date window: effective "
+                f"'earliest' {effective_earliest} is after 'latest' {effective_latest}"
             )
         watches.append(
             Watch(
@@ -296,6 +353,9 @@ def parse_config(data: Mapping[str, Any]) -> Config:
                         "max_stale_hours",
                     ),
                 ),
+                earliest=watch_earliest,
+                latest=watch_latest,
+                min_seats=_parse_min_seats(entry.get("min_seats"), "watch 'min_seats'"),
             )
         )
 
@@ -315,11 +375,6 @@ def parse_config(data: Mapping[str, Any]) -> Config:
         raise ConfigError("'poll_interval' must be greater than 0 seconds")
     if jitter < 0:
         raise ConfigError("'jitter' cannot be negative")
-
-    earliest = _parse_date(data.get("earliest"), "earliest")
-    latest = _parse_date(data.get("latest"), "latest")
-    if earliest and latest and earliest > latest:
-        raise ConfigError("'earliest' must not be after 'latest'")
 
     state_file = data.get("state_file")
     return Config(
@@ -347,6 +402,7 @@ def parse_config(data: Mapping[str, Any]) -> Config:
                 "max_stale_hours",
             ),
         ),
+        min_seats=global_min_seats if global_min_seats is not None else 1,
     )
 
 

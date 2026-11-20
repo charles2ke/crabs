@@ -5,8 +5,6 @@
   },
   "poll_interval": 300,
   "jitter": 60,
-  "earliest": "2026-09-01",
-  "latest": "2026-12-31",
   "state_file": ".openclaw/dublin-state.json",
   "notifiers": [
     { "type": "console" },
@@ -22,8 +20,8 @@
       "options": {
         "booking_url": "https://example.invalid/dublin/fr/book",
         "slots": [
-          { "date": "2026-09-14", "time": "09:20", "seats": 2 },
-          { "date": "2026-10-02", "time": "11:00" }
+          { "in_days": 14, "time": "09:20", "seats": 2 },
+          { "in_days": 32, "time": "11:00" }
         ]
       }
     },
@@ -36,7 +34,7 @@
       "options": {
         "booking_url": "https://example.invalid/dublin/es/book",
         "slots": [
-          { "date": "2026-09-28", "time": "14:45", "seats": 1 }
+          { "in_days": 28, "time": "14:45", "seats": 1 }
         ]
       }
     }

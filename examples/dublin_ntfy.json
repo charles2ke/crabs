@@ -1,0 +1,43 @@
+{
+  "metadata": {
+    "name": "Dublin Schengen slot watch with ntfy push alerts",
+    "notes": "Offline example using the mock provider. The ntfy topic is read from the environment because anyone who knows a public ntfy.sh topic can read it."
+  },
+  "poll_interval": 600,
+  "jitter": 120,
+  "state_file": ".openclaw/dublin-ntfy-state.json",
+  "notifiers": [
+    {
+      "type": "ntfy",
+      "server": "https://ntfy.sh",
+      "topic": "${OPENCLAW_NTFY_TOPIC}",
+      "priority": "high",
+      "tags": ["passport_control"]
+    }
+  ],
+  "watches": [
+    {
+      "country_from": "IE",
+      "country_to": "FR",
+      "city": "Dublin",
+      "visa_category": "short-stay",
+      "provider": "mock",
+      "options": {
+        "slots": [
+          {
+            "in_days": 14,
+            "time": "09:20",
+            "seats": 2,
+            "booking_url": "https://example.invalid/dublin/fr/book"
+          },
+          {
+            "in_days": 32,
+            "time": "11:00",
+            "seats": 1,
+            "booking_url": "https://example.invalid/dublin/fr/book"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 import json
 import os
 import unittest
+from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from urllib.parse import parse_qs
@@ -308,7 +309,11 @@ class AuthServerTestCase(unittest.TestCase):
                             "country_to": "ES",
                             "city": "Dublin",
                             "provider": "mock",
-                            "options": {"slots": [{"date": "2026-09-14"}]},
+                            "options": {
+                                "slots": [
+                                    {"date": (date.today() + timedelta(days=30)).isoformat()}
+                                ]
+                            },
                         },
                     ]
                 }

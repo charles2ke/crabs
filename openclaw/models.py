@@ -29,6 +29,11 @@ class Watch:
     quiet_hours: Mapping[str, Any] | None = None
     throttle: Mapping[str, Any] = field(default_factory=dict)
     health: Mapping[str, Any] = field(default_factory=dict)
+    # Per-watch overrides of the global date window and seat filter; ``None``
+    # inherits the global setting.
+    earliest: date | None = None
+    latest: date | None = None
+    min_seats: int | None = None
 
     @property
     def label(self) -> str:
@@ -86,6 +91,8 @@ class Alert:
     def to_text(self) -> str:
         if self.event_type == "health":
             return f"Health warning for {self.watch.label}: {self.message or 'provider is stale'}"
+        if self.event_type == "test":
+            return f"Test alert for {self.watch.label}: {self.message or 'notifications work'}"
         event = {
             "new": "new",
             "disappeared": "disappeared",

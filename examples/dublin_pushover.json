@@ -1,0 +1,42 @@
+{
+  "metadata": {
+    "name": "Dublin Schengen slot watch with Pushover alerts",
+    "notes": "Offline example using the mock provider. The Pushover application token and user key are read from the environment."
+  },
+  "poll_interval": 600,
+  "jitter": 120,
+  "state_file": ".openclaw/dublin-pushover-state.json",
+  "notifiers": [
+    {
+      "type": "pushover",
+      "token": "${OPENCLAW_PUSHOVER_TOKEN}",
+      "user": "${OPENCLAW_PUSHOVER_USER}",
+      "priority": 1
+    }
+  ],
+  "watches": [
+    {
+      "country_from": "IE",
+      "country_to": "FR",
+      "city": "Dublin",
+      "visa_category": "short-stay",
+      "provider": "mock",
+      "options": {
+        "slots": [
+          {
+            "in_days": 14,
+            "time": "09:20",
+            "seats": 2,
+            "booking_url": "https://example.invalid/dublin/fr/book"
+          },
+          {
+            "in_days": 32,
+            "time": "11:00",
+            "seats": 1,
+            "booking_url": "https://example.invalid/dublin/fr/book"
+          }
+        ]
+      }
+    }
+  ]
+}

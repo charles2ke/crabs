@@ -6,6 +6,24 @@ format. This project follows semantic versioning.
 ## [Unreleased]
 
 ### Added
+- ntfy (`"type": "ntfy"`) and Pushover (`"type": "pushover"`) notifiers, with
+  `examples/dublin_ntfy.json` and `examples/dublin_pushover.json`. The ntfy
+  access token and the Pushover application token must be `${ENV_VAR}`
+  placeholders; neither the ntfy topic nor either token appears in request URLs.
+- `--test-notifiers` sends one clearly labelled `test` alert through every
+  configured notifier and prints `ok` or a redacted failure for each. It exits
+  `2` if any notifier fails, and never polls providers or touches state.
+- Per-watch `earliest`, `latest`, and `min_seats` filters, plus a global
+  `min_seats` (default `1`). A watch whose effective date window is empty is
+  rejected at config load.
+- Failed notifier deliveries are kept in state and retried on later cycles,
+  only to the notifiers that failed, for up to 5 attempts in total (log events
+  `alert_retry`, `alert_retried`, and `alert_dropped`). Retries wait for quiet
+  hours but are not throttled again, and are dropped once their notifier or
+  watch is no longer configured. Queued state entries gain the additive keys
+  `retry_notifiers` and `attempts`.
+- Mock provider slots accept `in_days` (days from today in UTC) instead of a
+  fixed `date`, and a per-slot `booking_url`.
 - CLI usability: `--config` is now optional and falls back to `openclaw.json`,
   `config.json`, or `.openclaw/config.json` in the working directory, with an
   error that names the paths searched; `--help` gained usage examples and the
@@ -25,6 +43,22 @@ format. This project follows semantic versioning.
 ### Changed
 - Email `use_ssl: true` now selects implicit TLS without also enabling STARTTLS;
   explicitly setting both `use_ssl` and `use_tls` remains invalid.
+- An alert counts as dispatched (exit code `10`) only once at least one
+  notifier accepts it. A run whose alerts every notifier rejected now exits `0`
+  (or `3`) and logs how many alerts await a retry, and the later run whose
+  retry succeeds exits `10`.
+- The bundled mock examples use `in_days` instead of fixed 2026 dates and no
+  longer set a fixed date window, so the quickstart keeps producing alerts. The
+  demo slots move with the calendar, so the scheduled demo workflow alerts at
+  most once per UTC day.
+
+### Fixed
+- Past-dated slots were never filtered out, while state pruning forgot them,
+  so every run re-alerted the same expired slots as new (visible in the
+  scheduled demo workflow). Slots dated before today are now ignored, and a slot
+  that simply expired is no longer reported as disappeared.
+- Tests that hard-coded 2026 slot dates failed once those dates had passed;
+  they now use dates relative to today.
 
 ## [1.0.0] - 2026-09-04
 

@@ -2,7 +2,7 @@
 
 | Provider | Required options | Notes |
 | --- | --- | --- |
-| `mock` | none; optional `slots` or `file` | Offline demos and tests. |
+| `mock` | none; optional `slots` or `file` | Offline demos and tests. Each slot sets a fixed `date` or `in_days` (days from today in UTC, so demos never go stale), plus optional `time`, `seats`, and `booking_url`. |
 | `http-json` | `url` | Generic JSON list parser. |
 | `vfs-global` | `base_url`, `availability_path`, `centre_code`, `category_code`, `mission_code` | Permitted JSON availability paths only. |
 | `tlscontact` | `base_url`, `availability_path`, `location_code`, `category_code`, `destination_code` | Permitted JSON calendar paths only. |

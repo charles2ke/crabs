@@ -1,7 +1,7 @@
 import json
 import unittest
 import urllib.error
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -89,6 +89,52 @@ class MockProviderTests(unittest.TestCase):
 
     def test_no_slots(self):
         self.assertEqual(MockProvider().fetch(Watch("IE", "ES", "Dublin")), [])
+
+    def test_relative_dates(self):
+        today = datetime.now(timezone.utc).date()
+        watch = Watch(
+            "IE",
+            "ES",
+            "Dublin",
+            options={"slots": [{"in_days": 3}, {"in_days": 0}, {"in_days": -2}]},
+        )
+        slots = MockProvider().fetch(watch)
+        self.assertEqual(
+            [slot.slot_date for slot in slots],
+            [today + timedelta(days=3), today, today - timedelta(days=2)],
+        )
+
+    def test_rejects_bad_relative_dates(self):
+        for entry in (
+            {"in_days": "3"},
+            {"in_days": 1.5},
+            {"in_days": True},
+            {"in_days": 10**12},
+            {"in_days": 3, "date": "2026-09-14"},
+            {"time": "09:20"},
+        ):
+            watch = Watch("IE", "ES", "Dublin", options={"slots": [entry]})
+            with self.subTest(entry=entry), self.assertRaises(ProviderError):
+                MockProvider().fetch(watch)
+
+    def test_slot_booking_url_alias(self):
+        watch = Watch(
+            "IE",
+            "ES",
+            "Dublin",
+            options={
+                "booking_url": "https://default.invalid",
+                "slots": [
+                    {"date": "2026-09-14", "booking_url": "https://alias.invalid"},
+                    {"date": "2026-09-15", "url": "https://url.invalid", "booking_url": "x"},
+                    {"date": "2026-09-16"},
+                ],
+            },
+        )
+        self.assertEqual(
+            [slot.booking_url for slot in MockProvider().fetch(watch)],
+            ["https://alias.invalid", "https://url.invalid", "https://default.invalid"],
+        )
 
 
 class HttpJsonProviderTests(unittest.TestCase):
