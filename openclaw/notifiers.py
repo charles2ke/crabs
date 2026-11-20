@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import abc
+import hashlib
 import html
 import json
 import math
@@ -140,6 +141,8 @@ class Notifier(abc.ABC):
     """Base class for alert sinks."""
 
     name: str = "base"
+    destination_id: str | None = None
+    runtime_id: str | None = None
 
     @abc.abstractmethod
     def send(self, alert: Alert) -> None:
@@ -805,7 +808,7 @@ def _int_setting(value: Any, label: str, minimum: int, maximum: int) -> int:
     raise NotifierError(f"{label} must be an integer from {minimum} to {maximum}")
 
 
-def build_notifier(spec: Mapping[str, Any]) -> Notifier:
+def _build_notifier(spec: Mapping[str, Any]) -> Notifier:
     """Create a notifier from a config mapping such as ``{"type": "console"}``."""
     kind = str(spec.get("type", "console")).lower()
     if kind == ConsoleNotifier.name:
@@ -897,6 +900,14 @@ def build_notifier(spec: Mapping[str, Any]) -> Notifier:
             timeout=spec.get("timeout", DEFAULT_TIMEOUT),
         )
     raise NotifierError(f"unknown notifier type {kind!r}")
+
+
+def build_notifier(spec: Mapping[str, Any]) -> Notifier:
+    """Create a notifier and bind a non-reversible ID to its configuration."""
+    notifier = _build_notifier(spec)
+    encoded = json.dumps(spec, sort_keys=True, separators=(",", ":"), default=str)
+    notifier.destination_id = "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    return notifier
 
 
 def _optional_str(value: Any) -> str | None:

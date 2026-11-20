@@ -253,6 +253,108 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(replacement.alerts, [])
         self.assertEqual(monitor.state.meta["pending_alerts"], [])
 
+    def test_retry_stays_with_its_destination_when_same_type_notifiers_reorder(self):
+        notifier_a = {"type": "webhook", "url": "https://hooks.invalid/destination-a"}
+        notifier_b = {"type": "webhook", "url": "https://hooks.invalid/destination-b"}
+        calls = {"a": 0, "b": 0}
+
+        with TemporaryDirectory() as tmp:
+            state_file = str(Path(tmp) / "state.json")
+            config = make_config(
+                [{"date": SOON.isoformat()}],
+                state_file=state_file,
+                notifiers=[notifier_a, notifier_b],
+            )
+            first = Monitor(config)
+
+            def fail_a(alert):
+                calls["a"] += 1
+                raise NotifierError("boom")
+
+            first.notifiers[0].send = fail_a
+            first.notifiers[1].send = lambda alert: calls.__setitem__("b", calls["b"] + 1)
+            with self.assertLogs("openclaw", level="ERROR"):
+                self.assertEqual(len(first.run_once()), 1)
+            self.assertNotIn(
+                "destination-a",
+                Path(state_file).read_text(encoding="utf-8"),
+            )
+
+            reordered_config = make_config(
+                [{"date": SOON.isoformat()}],
+                state_file=state_file,
+                notifiers=[notifier_b, notifier_a],
+            )
+            reordered = Monitor(reordered_config)
+            reordered.notifiers[0].send = lambda alert: calls.__setitem__(
+                "b", calls["b"] + 1
+            )
+            reordered.notifiers[1].send = lambda alert: calls.__setitem__(
+                "a", calls["a"] + 1
+            )
+            self.assertEqual(len(reordered.run_once()), 1)
+            self.assertEqual(calls, {"a": 2, "b": 1})
+
+    def test_retry_is_not_redirected_when_destination_is_replaced(self):
+        notifier_a = {"type": "webhook", "url": "https://hooks.invalid/destination-a"}
+        notifier_b = {"type": "webhook", "url": "https://hooks.invalid/destination-b"}
+        replacement = {"type": "webhook", "url": "https://hooks.invalid/replacement"}
+        calls = {"b": 0, "replacement": 0}
+
+        with TemporaryDirectory() as tmp:
+            state_file = str(Path(tmp) / "state.json")
+            config = make_config(
+                [{"date": SOON.isoformat()}],
+                state_file=state_file,
+                notifiers=[notifier_a, notifier_b],
+            )
+            first = Monitor(config)
+
+            def fail_a(alert):
+                raise NotifierError("boom")
+
+            first.notifiers[0].send = fail_a
+            first.notifiers[1].send = lambda alert: calls.__setitem__("b", calls["b"] + 1)
+            with self.assertLogs("openclaw", level="ERROR"):
+                first.run_once()
+
+            replaced_config = make_config(
+                [{"date": SOON.isoformat()}],
+                state_file=state_file,
+                notifiers=[replacement],
+            )
+            replaced = Monitor(replaced_config)
+            replaced.notifiers[0].send = lambda alert: calls.__setitem__(
+                "replacement", calls["replacement"] + 1
+            )
+            with self.assertLogs("openclaw", level="WARNING") as logs:
+                self.assertEqual(replaced.run_once(), [])
+            self.assertIn("notifiers are no longer configured", "\n".join(logs.output))
+            self.assertEqual(calls, {"b": 1, "replacement": 0})
+
+    def test_legacy_retry_without_destination_identity_is_dropped(self):
+        config = make_config(
+            [],
+            notifiers=[{"type": "webhook", "url": "https://hooks.invalid/destination"}],
+        )
+        monitor = Monitor(config)
+        watch = config.watches[0]
+        item = monitor._serialize_alert(
+            Alert(watch, (Slot(watch, SOON),), datetime.now(timezone.utc))
+        )
+        item["retry_notifiers"] = ["0:webhook"]
+        item["attempts"] = 1
+        monitor.state.meta["pending_alerts"] = [item]
+        monitor.state.save()
+        calls = []
+        monitor.notifiers[0].send = calls.append
+
+        with self.assertLogs("openclaw", level="WARNING") as logs:
+            self.assertEqual(monitor.run_once(), [])
+        self.assertIn("notifiers are no longer configured", "\n".join(logs.output))
+        self.assertEqual(calls, [])
+        self.assertEqual(monitor.state.meta["pending_alerts"], [])
+
     def test_retry_is_dropped_when_its_watch_is_renamed(self):
         class Flaky(CollectingNotifier):
             name = "flaky"

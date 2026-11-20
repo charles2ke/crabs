@@ -8,6 +8,7 @@ import os
 import random
 import tempfile
 import time
+from uuid import uuid4
 from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Collection, Iterable, Mapping, Sequence
@@ -367,11 +368,19 @@ class Monitor:
         )
 
     def _notifier_ids(self) -> list[tuple[str, Notifier]]:
-        """Pair each notifier with a stable id that survives across runs."""
-        return [
-            (f"{index}:{notifier.name}", notifier)
-            for index, notifier in enumerate(self.notifiers)
-        ]
+        """Pair each notifier with its stable destination id."""
+        occurrences: dict[str, int] = {}
+        result: list[tuple[str, Notifier]] = []
+        for notifier in self.notifiers:
+            destination_id = notifier.destination_id
+            if destination_id is None:
+                if notifier.runtime_id is None:
+                    notifier.runtime_id = uuid4().hex
+                destination_id = f"runtime:{notifier.runtime_id}"
+            occurrence = occurrences.get(destination_id, 0)
+            occurrences[destination_id] = occurrence + 1
+            result.append((f"{destination_id}:{occurrence}", notifier))
+        return result
 
     def _dispatch(
         self, alert: Alert, targets: Collection[str] | None = None
