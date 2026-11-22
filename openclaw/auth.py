@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import email.utils
 import http.cookiejar
 import json
 import re
@@ -10,12 +11,14 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
-from .providers.base import AuthenticationError, ProviderError
+from .providers.base import AuthenticationError, ProviderError, RateLimitError
 
 DEFAULT_TIMEOUT = 20.0
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+_DELAY_SECONDS = re.compile(r"[0-9]+")
 
 
 DEFAULT_TOKEN_HEADER_FORMAT = "Bearer {token}"
@@ -63,6 +66,51 @@ def _validate_http_url(url: str) -> None:
     scheme = urllib.parse.urlparse(url).scheme.lower()
     if scheme not in ("http", "https"):
         raise ProviderError(f"unsupported URL scheme {scheme!r} for {redact_url(url)!r}")
+
+
+def lower_headers(headers: Any) -> dict[str, str]:
+    """Return response headers keyed by lower-case name (empty if unavailable)."""
+    try:
+        return {str(key).lower(): str(value) for key, value in headers.items()}
+    except (AttributeError, TypeError):
+        return {}
+
+
+def parse_retry_after(value: str | None, now: datetime | None = None) -> float | None:
+    """Return the seconds a ``Retry-After`` header asks to wait, or ``None``.
+
+    Both forms are accepted: a delay in seconds and an HTTP date.
+    """
+    if value is None:
+        return None
+    value = value.strip()
+    if _DELAY_SECONDS.fullmatch(value):
+        return float(value)
+    try:
+        when = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return max(0.0, (when - (now or datetime.now(timezone.utc))).total_seconds())
+
+
+def raise_if_rate_limited(url: str, status: int, headers: Mapping[str, str]) -> None:
+    """Raise :class:`RateLimitError` for HTTP 429, or 503 with ``Retry-After``."""
+    retry_after = parse_retry_after(headers.get("retry-after"))
+    if status == 429:
+        message = (
+            f"request to {redact_url(url)!r} was rate limited (HTTP 429); "
+            "keep poll interval/jitter conservative"
+        )
+    elif status == 503 and retry_after is not None:
+        message = (
+            f"request to {redact_url(url)!r} failed with HTTP 503; "
+            "portal appears temporarily unavailable"
+        )
+    else:
+        return
+    raise RateLimitError(message, retry_after=retry_after)
 
 
 def _is_login_url(url: str, login_url: str | None) -> bool:
@@ -138,6 +186,8 @@ class Session:
         self._authenticated = self.auth_type == "none"
         self._auth_header: tuple[str, str] | None = None
         self._token_expiry: float | None = None
+        #: Headers of the latest response, keyed by lower-case name.
+        self.last_headers: dict[str, str] = {}
 
     def _login_url(self) -> str | None:
         login_url = self.auth.get("login_url")
@@ -163,14 +213,17 @@ class Session:
         )
         self._redirect_handler.expect_json = expect_json
         self._redirect_handler.follow_redirects = follow_redirects
+        self.last_headers = {}
         try:
             with self.opener.open(  # noqa: S310 - scheme validated above
                 request, timeout=self.timeout
             ) as response:
                 status = int(response.getcode() or 0)
+                self.last_headers = lower_headers(getattr(response, "headers", None))
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
         except urllib.error.HTTPError as exc:
             status = int(exc.code)
+            self.last_headers = lower_headers(exc.headers)
             raw = exc.read(MAX_RESPONSE_BYTES + 1)
         except AuthenticationError:
             raise
@@ -225,6 +278,7 @@ class Session:
             csrf_url = str(csrf_spec.get("url") or login_url)
             status, raw = self.request(csrf_url)
             if status >= 400:
+                raise_if_rate_limited(csrf_url, status, self.last_headers)
                 raise AuthenticationError(
                     f"login to {redact_url(login_url)!r} failed while fetching CSRF token: HTTP {status}"
                 )
@@ -253,6 +307,7 @@ class Session:
         )
         success_status = {int(code) for code in self.auth.get("success_status", [200, 302])}
         if status not in success_status:
+            raise_if_rate_limited(login_url, status, self.last_headers)
             raise AuthenticationError(
                 f"login to {redact_url(login_url)!r} failed: HTTP {status} (check credentials)"
             )
@@ -268,6 +323,7 @@ class Session:
             expect_json=True,
         )
         if status >= 400:
+            raise_if_rate_limited(login_url, status, self.last_headers)
             raise AuthenticationError(
                 f"login to {redact_url(login_url)!r} failed: HTTP {status} (check credentials)"
             )

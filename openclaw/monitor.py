@@ -14,10 +14,11 @@ from pathlib import Path
 from typing import Any, Callable, Collection, Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
+from . import heartbeat
 from .config import Config
 from .models import Alert, Slot, Watch
 from .notifiers import Notifier, NotifierError, build_notifier
-from .providers import ChallengeError, ProviderError, get_provider
+from .providers import ChallengeError, ProviderError, RateLimitError, get_provider
 from .providers.base import Provider
 
 LOGGER = logging.getLogger("openclaw")
@@ -25,6 +26,9 @@ LOGGER = logging.getLogger("openclaw")
 #: Total delivery attempts (first send plus retries on later cycles) per
 #: notifier before an undeliverable alert is dropped.
 MAX_DELIVERY_ATTEMPTS = 5
+
+#: Longest pause honoured from a portal's ``Retry-After`` header (one day).
+MAX_BACKOFF_SECONDS = 24 * 60 * 60
 
 
 class SeenStore:
@@ -182,6 +186,18 @@ def in_window(slot: Slot, earliest: date | None, latest: date | None) -> bool:
     return True
 
 
+def paused_until(store: SeenStore, label: str, now: datetime) -> datetime | None:
+    """Return when the portal allows polling watch ``label`` again, if after ``now``."""
+    records = store.meta.get("backoff_until")
+    if not isinstance(records, dict) or label not in records:
+        return None
+    try:
+        until = datetime.fromisoformat(str(records[label]))
+        return until if until > now else None
+    except (TypeError, ValueError):
+        return None
+
+
 class Monitor:
     """Polls every configured watch and alerts on newly available slots."""
 
@@ -210,19 +226,31 @@ class Monitor:
     def check_watch(self, watch: Watch, today: date | None = None) -> list[Slot]:
         """Return the bookable slots currently offered for ``watch``.
 
-        Slots dated before ``today`` (the monitor clock's date by default),
-        outside the watch's date window, or offering fewer seats than its
-        ``min_seats`` are left out.
+        Fetches with :meth:`fetch_slots` and filters with :meth:`filter_slots`;
+        ``today`` defaults to the monitor clock's date.
         """
+        if today is None:
+            today = self.clock().date()
+        return self.filter_slots(watch, self.fetch_slots(watch), today)
+
+    def fetch_slots(self, watch: Watch) -> list[Slot]:
+        """Return every slot the provider offers for ``watch``, unfiltered."""
         provider = self._providers.get(watch.provider)
         if provider is None:
             provider = get_provider(watch.provider)
             self._providers[watch.provider] = provider
-        if today is None:
-            today = self.clock().date()
-        earliest, latest = self._window(watch)
+        return list(provider.fetch(watch))
+
+    def filter_slots(self, watch: Watch, slots: Iterable[Slot], today: date) -> list[Slot]:
+        """Return the ``slots`` matching the watch's filters, soonest first.
+
+        Slots dated before ``today``, outside the date window (including the
+        rolling ``within_days`` horizon), offering fewer seats than
+        ``min_seats``, or on a weekday not listed in ``weekdays`` are left out.
+        """
+        earliest, latest = self._window(watch, today)
         min_seats = self._min_seats(watch)
-        slots = provider.fetch(watch)
+        weekdays = self._weekdays(watch)
         return sorted(
             (
                 slot
@@ -230,17 +258,75 @@ class Monitor:
                 if slot.slot_date >= today
                 and in_window(slot, earliest, latest)
                 and slot.seats >= min_seats
+                and (weekdays is None or slot.slot_date.weekday() in weekdays)
             ),
             key=lambda slot: (slot.slot_date, slot.slot_time or ""),
         )
 
-    def _window(self, watch: Watch) -> tuple[date | None, date | None]:
+    def backoff_until(self, watch: Watch, now: datetime) -> datetime | None:
+        """Return when the portal allows polling ``watch`` again, if after ``now``."""
+        return paused_until(self.state, watch.label, now)
+
+    def _window(self, watch: Watch, today: date) -> tuple[date | None, date | None]:
         earliest = watch.earliest if watch.earliest is not None else self.config.earliest
         latest = watch.latest if watch.latest is not None else self.config.latest
+        within_days = (
+            watch.within_days if watch.within_days is not None else self.config.within_days
+        )
+        if within_days is not None:
+            horizon = today + timedelta(days=within_days)
+            latest = horizon if latest is None else min(latest, horizon)
         return earliest, latest
 
     def _min_seats(self, watch: Watch) -> int:
         return watch.min_seats if watch.min_seats is not None else self.config.min_seats
+
+    def _weekdays(self, watch: Watch) -> frozenset[int] | None:
+        weekdays = watch.weekdays if watch.weekdays is not None else self.config.weekdays
+        return frozenset(weekdays) if weekdays is not None else None
+
+    def _backoff_records(self) -> dict[str, Any]:
+        records = self.state.meta.setdefault("backoff_until", {})
+        if not isinstance(records, dict):
+            records = {}
+            self.state.meta["backoff_until"] = records
+        return records
+
+    def _sweep_backoff(self, now: datetime) -> None:
+        """Forget pauses that are over (or unreadable)."""
+        records = self.state.meta.get("backoff_until")
+        if records is None:
+            return
+        active = (
+            {
+                label: value
+                for label, value in records.items()
+                if paused_until(self.state, label, now) is not None
+            }
+            if isinstance(records, dict)
+            else {}
+        )
+        if records and active == records:
+            return
+        if active:
+            self.state.meta["backoff_until"] = active
+        else:
+            del self.state.meta["backoff_until"]
+        self.state.save()
+
+    def _record_backoff(self, watch: Watch, now: datetime, retry_after: float | None) -> None:
+        """Pause ``watch`` for as long as the portal's ``Retry-After`` asked."""
+        if retry_after is None or retry_after <= 0:
+            return
+        until = now + timedelta(seconds=min(retry_after, MAX_BACKOFF_SECONDS))
+        self._backoff_records()[watch.label] = until.isoformat()
+        self.state.save()
+        LOGGER.info(
+            "pausing %s until %s as the portal asked (Retry-After)",
+            watch.label,
+            until.isoformat(),
+            extra={"event": "provider_backoff", "watch": watch.label},
+        )
 
     def run_once(self) -> list[Alert]:
         """Poll every watch once and dispatch alerts for new slots.
@@ -258,10 +344,23 @@ class Monitor:
         # One cut-off for the whole cycle: slots before it are neither alerted
         # on nor kept in state, so the filter and the prune can never disagree.
         today = now.date()
+        self._sweep_backoff(now)
         self._flush_pending(now, alerts)
         if bootstrapping:
             LOGGER.info("bootstrap run: recording current slots without slot alerts")
         for watch in self.config.watches:
+            until = self.backoff_until(watch, now)
+            if until is not None:
+                # Not polled, so treated like a failure: its seen slots are
+                # kept and the run does not report a clean result.
+                LOGGER.info(
+                    "skipping %s: the portal asked to wait until %s",
+                    watch.label,
+                    until.isoformat(),
+                    extra={"event": "provider_backoff", "watch": watch.label},
+                )
+                failed_watch_labels.append(watch.label)
+                continue
             try:
                 slots = self.check_watch(watch, today=today)
             except ProviderError as exc:
@@ -276,6 +375,8 @@ class Monitor:
                     },
                 )
                 failed_watch_labels.append(watch.label)
+                if isinstance(exc, RateLimitError):
+                    self._record_backoff(watch, now, exc.retry_after)
                 warning = self._record_health(
                     watch, now, error=True, challenge=challenge
                 )
@@ -337,6 +438,8 @@ class Monitor:
             watch.label: dict(self._health_records().get(watch.label, {}))
             for watch in self.config.watches
         }
+        if self.config.heartbeat:
+            heartbeat.send_heartbeat(self.config.heartbeat)
         return alerts
 
     def run_forever(self, max_cycles: int | None = None) -> list[Alert]:

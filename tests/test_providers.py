@@ -1,3 +1,4 @@
+import http.client
 import json
 import unittest
 import urllib.error
@@ -7,10 +8,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from openclaw.auth import parse_retry_after
 from openclaw.models import Watch
 from openclaw.providers import (
     BlsInternationalProvider,
     ProviderError,
+    RateLimitError,
     TlscontactProvider,
     VfsGlobalProvider,
     get_provider,
@@ -319,10 +322,11 @@ class BlsProviderTests(unittest.TestCase):
 
 
 class AdapterHttpStatusTests(unittest.TestCase):
-    def test_rate_limit_errors_are_clarified(self):
+    @staticmethod
+    def _vfs_failing_with(error):
         provider = VfsGlobalProvider()
         provider._get_json_with_auth = lambda watch, url, headers, auth: (_ for _ in ()).throw(  # type: ignore[method-assign]
-            ProviderError("request failed: HTTP 429")
+            error
         )
         watch = Watch(
             "IE",
@@ -337,8 +341,20 @@ class AdapterHttpStatusTests(unittest.TestCase):
                 "mission_code": "FR",
             },
         )
-        with self.assertRaisesRegex(ProviderError, "rate limited"):
+        return provider, watch
+
+    def test_rate_limit_errors_are_clarified(self):
+        provider, watch = self._vfs_failing_with(ProviderError("request failed: HTTP 429"))
+        with self.assertRaisesRegex(RateLimitError, "rate limited") as caught:
             provider.fetch(watch)
+        self.assertIsNone(caught.exception.retry_after)
+
+    def test_rate_limit_errors_keep_their_retry_after(self):
+        original = RateLimitError("request was rate limited (HTTP 429)", retry_after=90.0)
+        provider, watch = self._vfs_failing_with(original)
+        with self.assertRaises(RateLimitError) as caught:
+            provider.fetch(watch)
+        self.assertIs(caught.exception, original)
 
     def test_missing_required_query_options_are_rejected(self):
         watches = [
@@ -466,6 +482,46 @@ class ChallengeDetectionTests(unittest.TestCase):
                 {},
                 {"type": "basic", "username": "alice", "password": "secret"},
             )
+
+
+class RetryAfterTests(unittest.TestCase):
+    URL = "https://portal.example.invalid/api"
+
+    def test_parse_retry_after_accepts_seconds_and_http_dates(self):
+        now = datetime(2026, 11, 22, 12, 0, tzinfo=timezone.utc)
+        for value, expected in (
+            ("120", 120.0),
+            (" 30 ", 30.0),
+            ("Sun, 22 Nov 2026 12:05:00 GMT", 300.0),
+            ("Sun, 22 Nov 2026 11:00:00 GMT", 0.0),
+            ("-5", None),
+            ("1.5", None),
+            ("soon", None),
+            ("", None),
+            (None, None),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(parse_retry_after(value, now=now), expected)
+
+    def _error(self, status, retry_after=None):
+        headers = http.client.HTTPMessage()
+        if retry_after is not None:
+            headers["Retry-After"] = retry_after
+        return urllib.error.HTTPError(self.URL, status, "busy", headers, BytesIO(b"{}"))
+
+    def test_http_json_keeps_retry_after_from_429_and_503(self):
+        for status, retry_after, expected in ((429, "120", 120.0), (429, None, None), (503, "60", 60.0)):
+            with self.subTest(status=status, retry_after=retry_after):
+                with patch("urllib.request.urlopen", side_effect=self._error(status, retry_after)):
+                    with self.assertRaises(RateLimitError) as caught:
+                        HttpJsonProvider()._get_json(self.URL, {})
+                self.assertEqual(caught.exception.retry_after, expected)
+
+    def test_http_json_503_without_retry_after_is_a_plain_failure(self):
+        with patch("urllib.request.urlopen", side_effect=self._error(503)):
+            with self.assertRaisesRegex(ProviderError, "HTTP 503") as caught:
+                HttpJsonProvider()._get_json(self.URL, {})
+        self.assertNotIsInstance(caught.exception, RateLimitError)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -9,7 +9,7 @@ from typing import Any, Mapping
 
 from ..auth import redact_url
 from ..models import Slot, Watch
-from .base import AuthenticationError, ChallengeError, ProviderError
+from .base import AuthenticationError, ChallengeError, ProviderError, RateLimitError
 
 #: Markers that identify CAPTCHA, anti-bot, or WAF interstitial responses.
 CHALLENGE_MARKERS = (
@@ -191,3 +191,25 @@ def http_status_from_error(exc: ProviderError) -> int | None:
     if not match:
         return None
     return int(match.group(1))
+
+
+def clarify_http_error(exc: ProviderError, url: str) -> ProviderError:
+    """Return a clearer error for rate limiting and portal outages.
+
+    A :class:`RateLimitError` (which carries the portal's ``Retry-After``) and
+    errors without an HTTP 429 or 5xx status are returned unchanged.
+    """
+    if isinstance(exc, RateLimitError):
+        return exc
+    status = http_status_from_error(exc)
+    if status == 429:
+        return RateLimitError(
+            f"request to {redact_url(url)!r} was rate limited (HTTP 429); "
+            "keep poll interval/jitter conservative"
+        )
+    if status is not None and 500 <= status <= 599:
+        return ProviderError(
+            f"request to {redact_url(url)!r} failed with HTTP {status}; "
+            "portal appears temporarily unavailable"
+        )
+    return exc

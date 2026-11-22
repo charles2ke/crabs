@@ -28,7 +28,13 @@ import urllib.request
 from datetime import datetime
 from typing import Any
 
-from ..auth import MAX_RESPONSE_BYTES, Session, redact_url
+from ..auth import (
+    MAX_RESPONSE_BYTES,
+    Session,
+    lower_headers,
+    raise_if_rate_limited,
+    redact_url,
+)
 from ..models import Slot, Watch
 from ._portal_common import CHALLENGE_HINT, looks_like_challenge
 from .base import (
@@ -97,6 +103,7 @@ class HttpJsonProvider(Provider):
         except urllib.error.HTTPError as exc:
             raw = exc.read(MAX_RESPONSE_BYTES + 1)
             self._raise_if_challenge(url, raw)
+            raise_if_rate_limited(url, exc.code, lower_headers(exc.headers))
             raise ProviderError(
                 f"request to {redact_url(url)!r} failed: HTTP {exc.code}"
             ) from exc
@@ -121,6 +128,7 @@ class HttpJsonProvider(Provider):
         if status in (401, 403):
             return self._retry_after_auth_failure(watch, session, url, headers, None)
         if status >= 400:
+            raise_if_rate_limited(url, status, session.last_headers)
             raise ProviderError(f"request to {redact_url(url)!r} failed: HTTP {status}")
         return self._decode_json(url, raw)
 
@@ -156,6 +164,7 @@ class HttpJsonProvider(Provider):
                 f"session expired and re-login failed for watch {watch.label!r}: HTTP {status}"
             ) from original
         if status >= 400:
+            raise_if_rate_limited(url, status, session.last_headers)
             raise ProviderError(f"request to {redact_url(url)!r} failed: HTTP {status}")
         return self._decode_json(url, raw)
 

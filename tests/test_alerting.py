@@ -5,18 +5,20 @@ import json
 import logging
 import unittest
 from contextlib import redirect_stderr
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from openclaw.config import parse_config
 from openclaw.logging_utils import configure_logging
-from openclaw.monitor import Monitor
+from openclaw.monitor import MAX_BACKOFF_SECONDS, Monitor
 from openclaw.notifiers import ConsoleNotifier, NotifierError
 from openclaw.providers.base import (
     ChallengeError,
     Provider,
     ProviderError,
+    RateLimitError,
     register_provider,
 )
 
@@ -214,8 +216,70 @@ class FailingProvider(Provider):
         raise ProviderError("request failed: HTTP 500")
 
 
+class RateLimitedProvider(Provider):
+    """Test provider that answers HTTP 429 with the given Retry-After."""
+
+    name = "test-rate-limited"
+
+    def __init__(self, retry_after=None):
+        self.retry_after = retry_after
+        self.calls = 0
+
+    def fetch(self, watch):
+        self.calls += 1
+        raise RateLimitError("request was rate limited (HTTP 429)", self.retry_after)
+
+
 register_provider(ChallengeProvider.name, ChallengeProvider)
 register_provider(FailingProvider.name, FailingProvider)
+register_provider(RateLimitedProvider.name, RateLimitedProvider)
+
+
+class RetryAfterTests(unittest.TestCase):
+    START = datetime(2026, 11, 22, 12, 0, tzinfo=timezone.utc)
+
+    def _run(self, cfg, provider, at):
+        monitor = Monitor(cfg, [], clock=lambda: at)
+        monitor._providers[RateLimitedProvider.name] = provider
+        with self.assertLogs("openclaw", level="INFO") as logs:
+            monitor.run_once()
+        return monitor, "\n".join(logs.output)
+
+    def test_retry_after_pauses_the_watch_across_runs(self):
+        provider = RateLimitedProvider(retry_after=120)
+        with TemporaryDirectory() as tmp:
+            cfg = replace(
+                config([], provider=RateLimitedProvider.name),
+                state_file=Path(tmp) / "state.json",
+            )
+            watch = cfg.watches[0]
+            monitor, _ = self._run(cfg, provider, self.START)
+            resume = self.START + timedelta(seconds=120)
+            self.assertEqual(monitor.backoff_until(watch, self.START), resume)
+
+            # A later scheduled run (a new process) honours the stored pause.
+            monitor, logs = self._run(cfg, provider, self.START + timedelta(seconds=60))
+            self.assertEqual(provider.calls, 1)
+            self.assertEqual(monitor.failed_watches, [watch.label])
+            self.assertIn(f"the portal asked to wait until {resume.isoformat()}", logs)
+            self.assertEqual(monitor.stats[watch.label]["failures"], 1)
+
+            monitor, _ = self._run(cfg, provider, resume)
+            self.assertEqual(provider.calls, 2)
+
+    def test_retry_after_is_capped_and_needs_a_positive_delay(self):
+        for retry_after, pause in (
+            (10**9, timedelta(seconds=MAX_BACKOFF_SECONDS)),
+            (None, None),
+            (0, None),
+        ):
+            with self.subTest(retry_after=retry_after):
+                cfg = config([], provider=RateLimitedProvider.name)
+                monitor, _ = self._run(cfg, RateLimitedProvider(retry_after), self.START)
+                self.assertEqual(
+                    monitor.backoff_until(cfg.watches[0], self.START),
+                    self.START + pause if pause else None,
+                )
 
 
 class ChallengeHealthTests(unittest.TestCase):

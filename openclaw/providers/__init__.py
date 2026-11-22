@@ -11,6 +11,7 @@ from .base import (
     ChallengeError,
     Provider,
     ProviderError,
+    RateLimitError,
     get_provider,
     register_provider,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "ChallengeError",
     "Provider",
     "ProviderError",
+    "RateLimitError",
     "get_provider",
     "register_provider",
 ]

@@ -66,6 +66,30 @@ raises `ChallengeError` and is reported as a provider-health warning so an
 operator can intervene manually. Confirm portal terms and local law and stop
 polling when requested.
 
+## Rate limits and Retry-After
+
+The HTTP providers (`http-json`, `vfs-global`, `tlscontact`, and
+`bls-international`) raise `RateLimitError`, a `ProviderError` subclass, when a
+portal answers HTTP 429 or answers HTTP 503 with a `Retry-After` header. This
+applies to slot requests and to login, CSRF, and token requests. A rate-limited
+login is not retried. `RateLimitError.retry_after` holds the requested delay in
+seconds, parsed from either a number of seconds or an HTTP date. It is `None`
+when the header is missing or invalid.
+
+The monitor then pauses that watch until the requested time, capped at 24 hours,
+and stores the pause in the state file. Later cycles and scheduled runs skip the
+watch until the pause ends. A custom provider can do the same by raising
+`RateLimitError(message, retry_after=seconds)`:
+
+```python
+from openclaw import RateLimitError
+
+raise RateLimitError("portal asked us to slow down", retry_after=300)
+```
+
+Without a usable `Retry-After`, the watch simply fails that cycle and is polled
+again on the next one. Keep `poll_interval` and `jitter` conservative either way.
+
 ## Adding a provider
 
 ```python

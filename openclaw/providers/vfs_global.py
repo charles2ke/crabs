@@ -10,10 +10,10 @@ from .http_json import HttpJsonProvider
 from ._portal_common import (
     build_slot,
     build_url,
+    clarify_http_error,
     coerce_seats,
     ensure_no_sign_in_wall,
     ensure_not_html,
-    http_status_from_error,
     value_at,
 )
 
@@ -53,16 +53,10 @@ class VfsGlobalProvider(HttpJsonProvider, Provider):
         try:
             payload = self._get_json_with_auth(watch, url, headers, auth)
         except ProviderError as exc:
-            status = http_status_from_error(exc)
-            if status == 429:
-                raise ProviderError(
-                    f"request to {url!r} was rate limited (HTTP 429); keep poll interval/jitter conservative"
-                ) from exc
-            if status is not None and 500 <= status <= 599:
-                raise ProviderError(
-                    f"request to {url!r} failed with HTTP {status}; portal appears temporarily unavailable"
-                ) from exc
-            raise
+            clarified = clarify_http_error(exc, url)
+            if clarified is exc:
+                raise
+            raise clarified from exc
         return parse_vfs_availability(watch, payload, options, request_url=url)
 
 
