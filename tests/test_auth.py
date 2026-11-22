@@ -10,7 +10,12 @@ from openclaw.auth import Session
 from openclaw.config import ConfigError, parse_config
 from openclaw.monitor import Monitor
 from openclaw.models import Watch
-from openclaw.providers import AuthenticationError, ProviderError, RateLimitError
+from openclaw.providers import (
+    AuthenticationError,
+    ChallengeError,
+    ProviderError,
+    RateLimitError,
+)
 from openclaw.providers.http_json import HttpJsonProvider
 
 
@@ -67,6 +72,11 @@ class PortalHandler(BaseHTTPRequestHandler):
             if mode == "rate-limited":
                 self._send(429, headers={"Retry-After": "90"})
                 return
+            if mode == "challenge-rate-limited":
+                self._send(
+                    429, b"<html><body>Checking your browser</body></html>", {"Retry-After": "90"}
+                )
+                return
             if "session=ok" in cookie:
                 self._send(200, b'[{"date":"2026-09-14"}]')
             else:
@@ -80,8 +90,9 @@ class PortalHandler(BaseHTTPRequestHandler):
         if self.path == "/login":
             self.state["login_posts"] = self.state.get("login_posts", 0) + 1
             self.state["last_login_body"] = body.decode("utf-8")
-            if self.state.get("login_rate_limited"):
-                self._send(429, headers={"Retry-After": "120"})
+            if "login_rate_limited" in self.state:
+                status, retry_after = self.state["login_rate_limited"]
+                self._send(status, headers={"Retry-After": retry_after})
             elif self.state.get("login_fails") or self.state["login_posts"] > self.state.get(
                 "fail_after_login_posts", 999999
             ):
@@ -142,7 +153,7 @@ class AuthServerTestCase(unittest.TestCase):
         self.assertIn("session=ok", self.server.state["seen_cookie"][-1])
 
     def test_rate_limited_login_is_not_retried(self):
-        self.server.state["login_rate_limited"] = True
+        self.server.state["login_rate_limited"] = (429, "120")
         auth = {
             "type": "form",
             "login_url": self.base_url + "/login",
@@ -153,6 +164,21 @@ class AuthServerTestCase(unittest.TestCase):
         self.assertEqual(caught.exception.retry_after, 120.0)
         self.assertEqual(self.server.state["login_posts"], 1)
 
+    def test_login_503_with_unusable_retry_after_is_not_retried(self):
+        auth = {
+            "type": "form",
+            "login_url": self.base_url + "/login",
+            "fields": {"username": "alice", "password": "secret"},
+        }
+        for retry_after in ("soon", ""):
+            with self.subTest(retry_after=retry_after):
+                self.server.state.clear()
+                self.server.state["login_rate_limited"] = (503, retry_after)
+                with self.assertRaises(RateLimitError) as caught:
+                    HttpJsonProvider().fetch(self._watch(auth))
+                self.assertIsNone(caught.exception.retry_after)
+                self.assertEqual(self.server.state["login_posts"], 1)
+
     def test_rate_limited_authenticated_request_keeps_retry_after(self):
         self.server.state["mode"] = "rate-limited"
         auth = {
@@ -161,6 +187,18 @@ class AuthServerTestCase(unittest.TestCase):
             "fields": {"username": "alice", "password": "secret"},
         }
         with self.assertRaises(RateLimitError) as caught:
+            HttpJsonProvider().fetch(self._watch(auth))
+        self.assertEqual(caught.exception.retry_after, 90.0)
+        self.assertEqual(self.server.state["slot_requests"], 1)
+
+    def test_challenge_on_rate_limited_authenticated_request_keeps_retry_after(self):
+        self.server.state["mode"] = "challenge-rate-limited"
+        auth = {
+            "type": "form",
+            "login_url": self.base_url + "/login",
+            "fields": {"username": "alice", "password": "secret"},
+        }
+        with self.assertRaises(ChallengeError) as caught:
             HttpJsonProvider().fetch(self._watch(auth))
         self.assertEqual(caught.exception.retry_after, 90.0)
         self.assertEqual(self.server.state["slot_requests"], 1)

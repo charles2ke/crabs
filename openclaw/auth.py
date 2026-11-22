@@ -95,22 +95,32 @@ def parse_retry_after(value: str | None, now: datetime | None = None) -> float |
     return max(0.0, (when - (now or datetime.now(timezone.utc))).total_seconds())
 
 
+def requested_delay(status: int, headers: Mapping[str, str]) -> float | None:
+    """Return the ``Retry-After`` delay of an HTTP 429 or 503 response, if usable."""
+    if status not in (429, 503):
+        return None
+    return parse_retry_after(headers.get("retry-after"))
+
+
 def raise_if_rate_limited(url: str, status: int, headers: Mapping[str, str]) -> None:
-    """Raise :class:`RateLimitError` for HTTP 429, or 503 with ``Retry-After``."""
-    retry_after = parse_retry_after(headers.get("retry-after"))
+    """Raise :class:`RateLimitError` for HTTP 429, or 503 with ``Retry-After``.
+
+    A 503 whose ``Retry-After`` is empty or malformed still counts as rate
+    limited, with ``retry_after=None``, so a login is not retried at once.
+    """
     if status == 429:
         message = (
             f"request to {redact_url(url)!r} was rate limited (HTTP 429); "
             "keep poll interval/jitter conservative"
         )
-    elif status == 503 and retry_after is not None:
+    elif status == 503 and "retry-after" in headers:
         message = (
             f"request to {redact_url(url)!r} failed with HTTP 503; "
             "portal appears temporarily unavailable"
         )
     else:
         return
-    raise RateLimitError(message, retry_after=retry_after)
+    raise RateLimitError(message, retry_after=requested_delay(status, headers))
 
 
 def _is_login_url(url: str, login_url: str | None) -> bool:
@@ -224,7 +234,10 @@ class Session:
         except urllib.error.HTTPError as exc:
             status = int(exc.code)
             self.last_headers = lower_headers(exc.headers)
-            raw = exc.read(MAX_RESPONSE_BYTES + 1)
+            try:
+                raw = exc.read(MAX_RESPONSE_BYTES + 1)
+            finally:
+                exc.close()
         except AuthenticationError:
             raise
         except (urllib.error.URLError, OSError) as exc:

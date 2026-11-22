@@ -70,16 +70,21 @@ polling when requested.
 
 The HTTP providers (`http-json`, `vfs-global`, `tlscontact`, and
 `bls-international`) raise `RateLimitError`, a `ProviderError` subclass, when a
-portal answers HTTP 429 or answers HTTP 503 with a `Retry-After` header. This
-applies to slot requests and to login, CSRF, and token requests. A rate-limited
-login is not retried. `RateLimitError.retry_after` holds the requested delay in
-seconds, parsed from either a number of seconds or an HTTP date. It is `None`
-when the header is missing or invalid.
+portal answers HTTP 429, or answers HTTP 503 with a `Retry-After` header (even
+an empty or malformed one). This applies to slot requests and to login, CSRF,
+and token requests. A rate-limited login is not retried.
+`RateLimitError.retry_after` holds the requested delay in seconds, parsed from
+either a number of seconds or an HTTP date. It is `None` when the header is
+missing or invalid. When such a 429 or 503 response is a CAPTCHA or anti-bot
+challenge, the provider raises `ChallengeError` instead, with the same
+`retry_after`; the challenge still counts toward the health warning.
 
-The monitor then pauses that watch until the requested time, capped at 24 hours,
-and stores the pause in the state file. Later cycles and scheduled runs skip the
-watch until the pause ends. A custom provider can do the same by raising
-`RateLimitError(message, retry_after=seconds)`:
+The monitor then pauses that watch until the requested time, counted from when
+the portal answered and capped at 24 hours, and stores the pause in the state
+file. Later cycles and scheduled runs skip the watch until the pause ends. A
+custom provider can do the same by raising
+`RateLimitError(message, retry_after=seconds)` or
+`ChallengeError(message, retry_after=seconds)`:
 
 ```python
 from openclaw import RateLimitError

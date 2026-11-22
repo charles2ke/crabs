@@ -53,6 +53,7 @@ def send_heartbeat(settings: Mapping[str, Any]) -> bool:
             response.read(1024)
     except urllib.error.HTTPError as exc:
         status = exc.code
+        exc.close()
     except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
         LOGGER.warning(
             "heartbeat ping to %s failed: %s",

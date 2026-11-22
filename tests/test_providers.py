@@ -349,12 +349,16 @@ class AdapterHttpStatusTests(unittest.TestCase):
             provider.fetch(watch)
         self.assertIsNone(caught.exception.retry_after)
 
-    def test_rate_limit_errors_keep_their_retry_after(self):
-        original = RateLimitError("request was rate limited (HTTP 429)", retry_after=90.0)
-        provider, watch = self._vfs_failing_with(original)
-        with self.assertRaises(RateLimitError) as caught:
-            provider.fetch(watch)
-        self.assertIs(caught.exception, original)
+    def test_rate_limit_and_challenge_errors_keep_their_retry_after(self):
+        for original in (
+            RateLimitError("request was rate limited (HTTP 429)", retry_after=90.0),
+            ChallengeError("CAPTCHA page served with HTTP 429", retry_after=90.0),
+        ):
+            with self.subTest(error=type(original).__name__):
+                provider, watch = self._vfs_failing_with(original)
+                with self.assertRaises(ProviderError) as caught:
+                    provider.fetch(watch)
+                self.assertIs(caught.exception, original)
 
     def test_missing_required_query_options_are_rejected(self):
         watches = [
@@ -503,17 +507,33 @@ class RetryAfterTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(parse_retry_after(value, now=now), expected)
 
-    def _error(self, status, retry_after=None):
+    def _error(self, status, retry_after=None, body=b"{}"):
         headers = http.client.HTTPMessage()
         if retry_after is not None:
             headers["Retry-After"] = retry_after
-        return urllib.error.HTTPError(self.URL, status, "busy", headers, BytesIO(b"{}"))
+        return urllib.error.HTTPError(self.URL, status, "busy", headers, BytesIO(body))
 
     def test_http_json_keeps_retry_after_from_429_and_503(self):
-        for status, retry_after, expected in ((429, "120", 120.0), (429, None, None), (503, "60", 60.0)):
+        for status, retry_after, expected in (
+            (429, "120", 120.0),
+            (429, None, None),
+            (503, "60", 60.0),
+            (503, "soon", None),
+            (503, "", None),
+        ):
             with self.subTest(status=status, retry_after=retry_after):
                 with patch("urllib.request.urlopen", side_effect=self._error(status, retry_after)):
                     with self.assertRaises(RateLimitError) as caught:
+                        HttpJsonProvider()._get_json(self.URL, {})
+                self.assertEqual(caught.exception.retry_after, expected)
+
+    def test_http_json_challenge_keeps_retry_after_of_429_and_503(self):
+        body = b"<html><body>Checking your browser</body></html>"
+        for status, expected in ((429, 120.0), (503, 120.0), (403, None)):
+            with self.subTest(status=status):
+                error = self._error(status, "120", body)
+                with patch("urllib.request.urlopen", side_effect=error):
+                    with self.assertRaises(ChallengeError) as caught:
                         HttpJsonProvider()._get_json(self.URL, {})
                 self.assertEqual(caught.exception.retry_after, expected)
 

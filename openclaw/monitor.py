@@ -314,11 +314,15 @@ class Monitor:
             del self.state.meta["backoff_until"]
         self.state.save()
 
-    def _record_backoff(self, watch: Watch, now: datetime, retry_after: float | None) -> None:
-        """Pause ``watch`` for as long as the portal's ``Retry-After`` asked."""
+    def _record_backoff(self, watch: Watch, retry_after: float | None) -> None:
+        """Pause ``watch`` for as long as the portal's ``Retry-After`` asked.
+
+        The pause counts from now, not from the start of the cycle, so time
+        spent on earlier watches, logins, or alerts does not shorten it.
+        """
         if retry_after is None or retry_after <= 0:
             return
-        until = now + timedelta(seconds=min(retry_after, MAX_BACKOFF_SECONDS))
+        until = self.clock() + timedelta(seconds=min(retry_after, MAX_BACKOFF_SECONDS))
         self._backoff_records()[watch.label] = until.isoformat()
         self.state.save()
         LOGGER.info(
@@ -375,8 +379,8 @@ class Monitor:
                     },
                 )
                 failed_watch_labels.append(watch.label)
-                if isinstance(exc, RateLimitError):
-                    self._record_backoff(watch, now, exc.retry_after)
+                if isinstance(exc, (RateLimitError, ChallengeError)):
+                    self._record_backoff(watch, exc.retry_after)
                 warning = self._record_health(
                     watch, now, error=True, challenge=challenge
                 )

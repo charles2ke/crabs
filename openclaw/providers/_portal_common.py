@@ -196,10 +196,11 @@ def http_status_from_error(exc: ProviderError) -> int | None:
 def clarify_http_error(exc: ProviderError, url: str) -> ProviderError:
     """Return a clearer error for rate limiting and portal outages.
 
-    A :class:`RateLimitError` (which carries the portal's ``Retry-After``) and
-    errors without an HTTP 429 or 5xx status are returned unchanged.
+    A :class:`RateLimitError` or :class:`ChallengeError` (either may carry the
+    portal's ``Retry-After``) and errors without an HTTP 429 or 5xx status are
+    returned unchanged.
     """
-    if isinstance(exc, RateLimitError):
+    if isinstance(exc, (RateLimitError, ChallengeError)):
         return exc
     status = http_status_from_error(exc)
     if status == 429:

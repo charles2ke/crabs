@@ -51,13 +51,15 @@ tagged commit still declared `1.0.0`, so that release has no distributions.
 - `within_days` and `weekdays` filters, global or per watch. `within_days`
   keeps slots at most N days after today (UTC, inclusive, still capped by
   `latest`); `weekdays` takes day names such as `["mon", "friday"]`.
-- `Retry-After` support. An HTTP 429, or a 503 with `Retry-After`, from a slot,
-  login, CSRF, or token request raises the new `RateLimitError` (a
-  `ProviderError` with `retry_after` in seconds), and a rate-limited login is
-  not retried. The monitor pauses that watch until the requested time, at most
-  24 hours, and stores the pause in the state file under
-  `_openclaw.backoff_until`, so later scheduled runs skip the watch too.
-  `--stats` prints `paused_until=` while a pause lasts.
+- `Retry-After` support. An HTTP 429, or a 503 with any `Retry-After` header,
+  from a slot, login, CSRF, or token request raises the new `RateLimitError` (a
+  `ProviderError` with `retry_after` in seconds, or `None` when the header is
+  missing or unusable), and a rate-limited login is not retried. A challenge
+  served with such a response raises `ChallengeError` with the same
+  `retry_after`. The monitor pauses that watch until the requested time,
+  counted from the portal's answer and at most 24 hours, and stores the pause
+  in the state file under `_openclaw.backoff_until`, so later scheduled runs
+  skip the watch too. `--stats` prints `paused_until=` while a pause lasts.
 - Optional `heartbeat` dead man's switch: a `GET` to a ping URL, such as a
   healthchecks.io check, after every completed cycle. The URL must be a
   `${ENV_VAR}` placeholder, diagnostics and errors show only its scheme and
@@ -103,6 +105,9 @@ tagged commit still declared `1.0.0`, so that release has no distributions.
   that simply expired is no longer reported as disappeared.
 - Tests that hard-coded 2026 slot dates failed once those dates had passed;
   they now use dates relative to today.
+- HTTP error responses from portals are now closed as soon as they are read,
+  instead of when they are garbage-collected (Python 3.14+ reported this as
+  `ResourceWarning`).
 
 ## [1.0.0] - 2026-09-04
 

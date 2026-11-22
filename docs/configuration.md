@@ -67,10 +67,12 @@ a challenge; the warning exists so a human can decide how to proceed. Raise
 `max_consecutive_challenges` to tolerate occasional challenges before alerting.
 
 When a portal answers HTTP 429, or HTTP 503 with a `Retry-After` header, the
-watch is paused until the time the portal asked for, capped at 24 hours. The
-pause is kept in the state file, so later scheduled runs honour it too. A
-paused watch is skipped, counts as failed (exit code `3`), keeps its alerted
-slots, and shows `paused_until=` in `--stats`. A 429 without `Retry-After`
+watch is paused until the time the portal asked for, counted from its answer
+and capped at 24 hours. A challenge served with such a response pauses the
+watch too, and still raises the challenge warning. The pause is kept in the
+state file, so later scheduled runs honour it too. A paused watch is skipped,
+counts as failed (exit code `3`), keeps its alerted slots, and shows
+`paused_until=` in `--stats`. Without a usable `Retry-After` delay, the watch
 fails that cycle only. See [Providers](providers.md#rate-limits-and-retry-after).
 
 `heartbeat` is an optional dead man's switch. After every completed polling

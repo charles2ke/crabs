@@ -205,8 +205,11 @@ class ChallengeProvider(Provider):
 
     name = "test-challenge"
 
+    def __init__(self, retry_after=None):
+        self.retry_after = retry_after
+
     def fetch(self, watch):
-        raise ChallengeError("portal returned a CAPTCHA/anti-bot challenge")
+        raise ChallengeError("portal returned a CAPTCHA/anti-bot challenge", self.retry_after)
 
 
 class FailingProvider(Provider):
@@ -238,9 +241,10 @@ register_provider(RateLimitedProvider.name, RateLimitedProvider)
 class RetryAfterTests(unittest.TestCase):
     START = datetime(2026, 11, 22, 12, 0, tzinfo=timezone.utc)
 
-    def _run(self, cfg, provider, at):
-        monitor = Monitor(cfg, [], clock=lambda: at)
-        monitor._providers[RateLimitedProvider.name] = provider
+    def _run(self, cfg, provider, at, notifiers=()):
+        clock = at if callable(at) else (lambda: at)
+        monitor = Monitor(cfg, list(notifiers), clock=clock)
+        monitor._providers[provider.name] = provider
         with self.assertLogs("openclaw", level="INFO") as logs:
             monitor.run_once()
         return monitor, "\n".join(logs.output)
@@ -280,6 +284,31 @@ class RetryAfterTests(unittest.TestCase):
                     monitor.backoff_until(cfg.watches[0], self.START),
                     self.START + pause if pause else None,
                 )
+
+    def test_pause_counts_from_when_the_portal_answered(self):
+        current = [self.START]
+
+        class SlowPortal(RateLimitedProvider):
+            def fetch(self, watch):
+                current[0] += timedelta(seconds=90)  # e.g. a slow login first
+                return super().fetch(watch)
+
+        cfg = config([], provider=RateLimitedProvider.name)
+        monitor, _ = self._run(cfg, SlowPortal(retry_after=60), lambda: current[0])
+        self.assertEqual(
+            monitor.backoff_until(cfg.watches[0], self.START),
+            self.START + timedelta(seconds=150),
+        )
+
+    def test_challenge_with_retry_after_pauses_and_still_warns(self):
+        collector = Collector()
+        cfg = config([], provider=ChallengeProvider.name)
+        monitor, _ = self._run(cfg, ChallengeProvider(retry_after=120), self.START, [collector])
+        self.assertEqual([alert.event_type for alert in collector.alerts], ["health"])
+        self.assertEqual(
+            monitor.backoff_until(cfg.watches[0], self.START),
+            self.START + timedelta(seconds=120),
+        )
 
 
 class ChallengeHealthTests(unittest.TestCase):
