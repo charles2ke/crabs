@@ -4,11 +4,14 @@
 
 | Version | Supported |
 | ------- | --------- |
-| 1.0.x (tagged `v1`) | Yes |
+| 1.1.x | Yes |
+| 1.0.x (tagged `v1`) | No |
 | 0.1.x and earlier | No |
 
 Security fixes are made on the latest release and the `main` branch. Older
-releases are not patched; upgrade to the latest `1.0.x` release instead.
+releases are not patched; upgrade to the latest `1.1.x` release instead.
+Release assets come with `SHA256SUMS` and GitHub build provenance attestations;
+verify a downloaded file with `gh attestation verify FILE --repo charles2ke/crabs`.
 
 ## Scope
 

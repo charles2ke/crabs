@@ -29,11 +29,15 @@ class Watch:
     quiet_hours: Mapping[str, Any] | None = None
     throttle: Mapping[str, Any] = field(default_factory=dict)
     health: Mapping[str, Any] = field(default_factory=dict)
-    # Per-watch overrides of the global date window and seat filter; ``None``
-    # inherits the global setting.
+    # Per-watch overrides of the global slot filters; ``None`` inherits the
+    # global setting.
     earliest: date | None = None
     latest: date | None = None
     min_seats: int | None = None
+    #: Only slots at most this many days after today (UTC) are kept.
+    within_days: int | None = None
+    #: Allowed slot weekdays as :meth:`datetime.date.weekday` numbers (Monday is 0).
+    weekdays: tuple[int, ...] | None = None
 
     @property
     def label(self) -> str:

@@ -1,10 +1,12 @@
 import io
 import json
 import unittest
+import urllib.error
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from openclaw.cli import EXIT_ALERTS, main
 from openclaw.config import parse_config
@@ -92,6 +94,45 @@ class MonitorTests(unittest.TestCase):
         monitor = Monitor(config, notifiers=[], sleeper=lambda _: None)
         slots = monitor.check_watch(config.watches[0])
         self.assertEqual([slot.slot_date for slot in slots], [SOON])
+
+    def test_weekdays_filter(self):
+        week = [SOON + timedelta(days=offset) for offset in range(7)]
+        config = make_config(
+            [{"date": day.isoformat()} for day in week], weekdays=["mon", "thursday"]
+        )
+        monitor = Monitor(config, notifiers=[], sleeper=lambda _: None)
+        found = [slot.slot_date for slot in monitor.check_watch(config.watches[0])]
+        self.assertEqual(found, [day for day in week if day.weekday() in (0, 3)])
+
+    def test_within_days_is_relative_to_today_and_capped_by_latest(self):
+        today = date(2026, 11, 22)
+        days = [today + timedelta(days=offset) for offset in (2, 5, 9, 20)]
+        watch = {
+            "country_from": "IE",
+            "country_to": "FR",
+            "city": "Dublin",
+            "options": {"slots": [{"date": day.isoformat()} for day in days]},
+        }
+        config = parse_config(
+            {
+                "within_days": 3,
+                "latest": days[2].isoformat(),
+                "watches": [watch, {**watch, "country_to": "ES", "within_days": 30}],
+            }
+        )
+        monitor = Monitor(config, notifiers=[], sleeper=lambda _: None)
+        inherited, overridden = (
+            [slot.slot_date for slot in monitor.check_watch(watch, today=today)]
+            for watch in config.watches
+        )
+        self.assertEqual(inherited, days[:1])
+        # 30 days would reach days[3], but 'latest' still caps the window.
+        self.assertEqual(overridden, days[:3])
+        later = [
+            slot.slot_date
+            for slot in monitor.check_watch(config.watches[0], today=days[0])
+        ]
+        self.assertEqual(later, days[:2])
 
     def test_provider_errors_do_not_stop_the_loop(self):
         config = parse_config(
@@ -575,6 +616,43 @@ class CliTests(unittest.TestCase):
             path.write_text("{}", encoding="utf-8")
             with self.assertLogs("openclaw", level="ERROR"):
                 self.assertEqual(main(["--config", str(path), "--once"]), 2)
+
+
+class HeartbeatTests(unittest.TestCase):
+    URL = "https://hc-ping.example.invalid/ping/0f3c-token"
+
+    def _monitor(self):
+        config = replace(
+            make_config([{"date": SOON.isoformat()}]),
+            heartbeat={"url": self.URL, "timeout": 5.0},
+        )
+        return Monitor(config, notifiers=[], sleeper=lambda _: None)
+
+    def test_pings_after_every_completed_cycle(self):
+        with patch("urllib.request.urlopen") as urlopen:
+            urlopen.return_value.__enter__.return_value.getcode.return_value = 200
+            self._monitor().run_forever(max_cycles=2)
+        self.assertEqual(urlopen.call_count, 2)
+        urlopen.assert_called_with(self.URL, timeout=5.0)
+
+    def test_failed_ping_is_logged_without_the_token_and_never_raises(self):
+        monitor = self._monitor()
+        for error, reason in (
+            (urllib.error.URLError("connection refused"), "connection refused"),
+            (urllib.error.HTTPError(self.URL, 500, "Server Error", {}, None), "HTTP 500"),
+            (ValueError(f"unknown url type: {self.URL}"), "ValueError"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                with patch("urllib.request.urlopen", side_effect=error), self.assertLogs(
+                    "openclaw", level="WARNING"
+                ) as logs:
+                    monitor.run_once()
+                output = "\n".join(logs.output)
+                self.assertIn(
+                    f"heartbeat ping to https://hc-ping.example.invalid failed: {reason}",
+                    output,
+                )
+                self.assertNotIn("0f3c-token", output)
 
 
 if __name__ == "__main__":  # pragma: no cover

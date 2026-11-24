@@ -15,10 +15,11 @@ from typing import Sequence
 from . import __version__
 from .auth import redact_url
 from .config import Config, ConfigError, inspect_config, load_config
+from .heartbeat import heartbeat_endpoint
 from .logging_utils import configure_logging, redact_log_text
 from .locking import FileLock, LockError
-from .models import Alert
-from .monitor import Monitor, SeenStore
+from .models import Alert, Slot
+from .monitor import Monitor, SeenStore, paused_until
 from .notifiers import (
     NTFY_DEFAULT_SERVER,
     PUSHOVER_API_URL,
@@ -52,13 +53,14 @@ examples:
   openclaw -c examples/dublin.json --once        run one offline cycle
   openclaw -c config.json --validate-config      check config without polling
   openclaw -c config.json --test-notifiers       send a test alert to each notifier
+  openclaw -c config.json --list-slots           show what each portal offers now
   openclaw -c config.json --once --bootstrap     first scheduled run, no alerts
   openclaw -c config.json --stats                show persisted health counters
 
 exit codes:
   0   ran successfully, no alert dispatched
   2   configuration, provider, or notifier setup error (or a failed test alert)
-  3   provider failure and nothing was alerted
+  3   provider failure (or a watch paused by the portal) and nothing was alerted
   4   another run holds the state lock
   10  one or more slot or health alerts dispatched
 """
@@ -119,6 +121,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "send one test alert through every configured notifier and exit; "
             "does not poll providers or touch the state file"
+        ),
+    )
+    modes.add_argument(
+        "--list-slots",
+        action="store_true",
+        help=(
+            "poll every watch once and print the offered slots that match its "
+            "filters; sends no alerts and never writes the state file"
         ),
     )
     parser.add_argument(
@@ -201,6 +211,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.test_notifiers:
         return _test_notifiers(config)
+
+    if args.list_slots:
+        return _list_slots(config)
 
     if args.bootstrap and not config.state_file:
         LOGGER.error("--bootstrap needs a state file: set 'state_file' or pass --state")
@@ -287,6 +300,47 @@ def _print_inventory(config: Config) -> None:
             endpoint = spec.get("url") or spec.get("path")
         detail = f" endpoint={_endpoint(endpoint)}" if endpoint else ""
         print(f"notifier {kind}{detail}")
+    if config.heartbeat:
+        # Only scheme and host: the ping URL path is the secret.
+        print(f"heartbeat endpoint={heartbeat_endpoint(str(config.heartbeat['url']))}")
+
+
+def _slot_line(slot: Slot) -> str:
+    when = slot.slot_date.isoformat()
+    if slot.slot_time:
+        when = f"{when} {slot.slot_time}"
+    line = f"  * {when} - {slot.seats} seat(s)"
+    return f"{line} - {slot.booking_url}" if slot.booking_url else line
+
+
+def _list_slots(config: Config) -> int:
+    """Poll each watch once and print matching slots; no alerts, no state writes."""
+    monitor = Monitor(config, notifiers=[])
+    now = monitor.clock()
+    problems = 0
+    for watch in config.watches:
+        until = monitor.backoff_until(watch, now)
+        if until is not None:
+            problems += 1
+            print(f"{watch.label}: skipped, portal asked to wait until {until.isoformat()}")
+            continue
+        try:
+            offered = monitor.fetch_slots(watch)
+        except ProviderError as exc:
+            problems += 1
+            print(f"{watch.label}: FAILED: {redact_log_text(str(exc))}")
+            continue
+        if not offered:
+            print(f"{watch.label}: no slots offered")
+            continue
+        matching = monitor.filter_slots(watch, offered, now.date())
+        print(
+            f"{watch.label}: {len(matching)} of {len(offered)} offered slot(s) "
+            "match the filters"
+        )
+        for slot in matching:
+            print(_slot_line(slot))
+    return EXIT_PROVIDER_ERROR if problems else EXIT_NO_SLOTS
 
 
 def _test_notifiers(config: Config) -> int:
@@ -333,14 +387,17 @@ def _print_stats(config: Config) -> None:
     records = store.meta.get("health", {})
     if not isinstance(records, dict):
         records = {}
+    now = datetime.now(timezone.utc)
     for watch in config.watches:
         record = records.get(watch.label, {})
+        until = paused_until(store, watch.label, now)
+        paused = f" paused_until={until.isoformat()}" if until else ""
         print(
             f"{watch.label}: slots_seen={record.get('slots_seen', 0)} "
             f"successes={record.get('successes', 0)} "
             f"failures={record.get('failures', 0)} "
             f"challenges={record.get('challenges', 0)} "
-            f"last_success={record.get('last_success', 'never')}"
+            f"last_success={record.get('last_success', 'never')}{paused}"
         )
 
 

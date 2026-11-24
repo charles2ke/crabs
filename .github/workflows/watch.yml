@@ -67,6 +67,8 @@ jobs:
           OPENCLAW_PASS: ${{ secrets.OPENCLAW_PASS }}
           OPENCLAW_API_TOKEN: ${{ secrets.OPENCLAW_API_TOKEN }}
           OPENCLAW_WEBHOOK_URL: ${{ secrets.OPENCLAW_WEBHOOK_URL }}
+          # Optional dead man's switch ping URL, for a config "heartbeat".
+          OPENCLAW_HEARTBEAT_URL: ${{ secrets.OPENCLAW_HEARTBEAT_URL }}
           # Cold cache (or an explicit manual request) => bootstrap instead of
           # dumping every currently open slot at the operator.
           BOOTSTRAP: ${{ (steps.state.outputs.cache-matched-key == '' || inputs.bootstrap) && '--bootstrap' || '' }}
@@ -78,7 +80,7 @@ jobs:
           case "$code" in
             0)  echo "::notice::no new slots" ;;
             10) echo "::notice::new slots found and alerts dispatched" ;;
-            3)  echo "::warning::a provider was unavailable; will retry next run" ;;
+            3)  echo "::warning::a provider was unavailable or asked to wait; will retry next run" ;;
             4)  echo "::warning::another run holds the state lock; skipped" ;;
             *)  echo "::error::openclaw failed with exit code $code"; exit "$code" ;;
           esac

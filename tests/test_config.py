@@ -1,8 +1,10 @@
 import json
+import os
 import unittest
 from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from openclaw.config import ConfigError, load_config, parse_config
 from openclaw.models import Slot, Watch
@@ -81,6 +83,59 @@ class ConfigTests(unittest.TestCase):
                     parse_config(
                         {"watches": [{**BASE["watches"][0], "min_seats": value}]}
                     )
+
+    def test_within_days_and_weekdays(self):
+        default = parse_config(BASE)
+        self.assertEqual((default.within_days, default.weekdays), (None, None))
+        self.assertEqual(
+            (default.watches[0].within_days, default.watches[0].weekdays), (None, None)
+        )
+        watch = {**BASE["watches"][0], "within_days": 14.0, "weekdays": ["Fri", "monday", "MON"]}
+        config = parse_config({"watches": [watch], "within_days": 60, "weekdays": ["sat"]})
+        self.assertEqual((config.within_days, config.weekdays), (60, (5,)))
+        self.assertEqual((config.watches[0].within_days, config.watches[0].weekdays), (14, (0, 4)))
+
+    def test_within_days_and_weekdays_validation(self):
+        for value in (0, 3651, 1.5, True, "soon"):
+            with self.subTest(within_days=value):
+                with self.assertRaisesRegex(
+                    ConfigError, "'within_days' must be a positive integer no greater than 3650"
+                ):
+                    parse_config({**BASE, "within_days": value})
+                with self.assertRaisesRegex(ConfigError, "watch 'within_days'"):
+                    parse_config({"watches": [{**BASE["watches"][0], "within_days": value}]})
+        for value, message in (
+            ([], "non-empty list"),
+            ("mon", "non-empty list"),
+            (["funday"], "unknown weekday 'funday'"),
+            ([0], "unknown weekday 0"),
+        ):
+            with self.subTest(weekdays=value), self.assertRaisesRegex(
+                ConfigError, f"watch 'weekdays' .*{message}"
+            ):
+                parse_config({"watches": [{**BASE["watches"][0], "weekdays": value}]})
+
+    def test_heartbeat(self):
+        self.assertIsNone(parse_config(BASE).heartbeat)
+        url = "https://hc-ping.example.invalid/0f3c-token"
+        env = {"OPENCLAW_TEST_HEARTBEAT": url, "OPENCLAW_TEST_FTP": "ftp://x.invalid/0f3c-token"}
+        placeholder = "${OPENCLAW_TEST_HEARTBEAT}"
+        with patch.dict(os.environ, env):
+            os.environ.pop("OPENCLAW_TEST_UNSET", None)
+            config = parse_config({**BASE, "heartbeat": {"url": placeholder, "timeout": 3}})
+            self.assertEqual(config.heartbeat, {"url": url, "timeout": 3.0})
+            for heartbeat, message in (
+                ({"url": url}, "must use a \\$\\{ENV_VAR\\} placeholder"),
+                ({"url": "${OPENCLAW_TEST_UNSET}"}, "must not be empty"),
+                ({"url": "${OPENCLAW_TEST_FTP}"}, "must be an http\\(s\\) URL"),
+                ({"url": placeholder, "timeout": 0}, "greater than 0"),
+                ({"url": placeholder, "method": "POST"}, "unknown settings: method"),
+                (placeholder, "must be an object"),
+            ):
+                with self.subTest(heartbeat=heartbeat):
+                    with self.assertRaisesRegex(ConfigError, message) as caught:
+                        parse_config({**BASE, "heartbeat": heartbeat})
+                    self.assertNotIn("0f3c-token", str(caught.exception))
 
     def test_rejects_missing_watches(self):
         with self.assertRaises(ConfigError):

@@ -1,6 +1,7 @@
 # Contributing
 
-Use Python 3.10 or newer. Runtime code must remain standard-library only.
+Use Python 3.10 or newer; CI tests every version from 3.10 to 3.15. Runtime code
+must remain standard-library only.
 
 ```bash
 python -m venv .venv
@@ -9,6 +10,18 @@ pip install -e '.[dev]'
 python -m unittest discover -s tests -v
 python -m mypy openclaw
 ```
+
+To check the packaging the way CI does, build the distributions and smoke-test
+the wheel in a throwaway virtual environment:
+
+```bash
+rm -rf dist && python -m build
+.github/scripts/smoke-test-wheel.sh dist/*.whl
+```
+
+Development tools are pinned in the `dev` extra of `pyproject.toml`. Dependabot
+proposes grouped weekly updates for them and for the GitHub Actions in
+`.github/workflows`.
 
 Tests must be fully offline. Never add live credentials, portal traffic, booking
 automation, seat holds, CAPTCHA/WAF/rate-limit bypasses, or undocumented
@@ -30,21 +43,29 @@ Tags use `vX.Y.Z`; the shorter `vX` and `vX.Y` forms are also accepted and are
 matched as prefixes of the version in `pyproject.toml`, so `v1` releases whatever
 `1.Y.Z` version the tagged commit declares and `v1.2` releases its `1.2.Z`
 version. The release workflow uses that resolved version to look up the changelog
-section.
+section. Prefer the full `vX.Y.Z` form: a tag names one commit, so a short
+`vX.Y` tag cannot also cover a later `X.Y.Z` patch release.
 
 To release:
 
 1. Move the relevant entries from `Unreleased` into a dated version section in
-   `CHANGELOG.md`.
-2. Bump the version in `pyproject.toml`, then merge the release pull request. The
-   tag must resolve to the same version as `pyproject.toml`, or the workflow fails.
-3. Tag the merge commit `vX.Y.Z` and push the tag. Push a tag rather than creating
-   a release from the GitHub UI: only a tag push (or a `workflow_dispatch` run of
-   `release.yml` for that tag) runs the tests, builds the distributions, and
-   attaches them with the changelog notes.
-4. Wait for the release workflow to pass tests and mypy, build both distributions,
-   and publish the GitHub Release.
-5. Verify the release notes, sdist, wheel, and installed `openclaw --version`.
+   `CHANGELOG.md`, and update the compare links at the bottom.
+2. Bump the version in `pyproject.toml`, then check the tag, version, and notes
+   locally with `python .github/scripts/release_notes.py vX.Y.Z`; it prints the
+   release notes or the reason the release workflow would fail. Merge the release
+   pull request. The tag must resolve to the same version as `pyproject.toml`, or
+   the workflow fails before building anything.
+3. Tag the merge commit `vX.Y.Z` and push the tag (`git tag vX.Y.Z <sha>` and
+   `git push origin vX.Y.Z`). Push a tag rather than creating a release from the
+   GitHub UI: only a tag push (or a `workflow_dispatch` run of `release.yml` for
+   that tag) runs the tests, builds the distributions, and attaches them with the
+   changelog notes.
+4. Wait for the release workflow to pass tests and mypy, build both
+   distributions, smoke-test the wheel, attest their build provenance, and
+   publish the GitHub Release with the wheel, sdist, and `SHA256SUMS`.
+5. Verify the release notes and installed `openclaw --version`, and check a
+   downloaded asset with `sha256sum --ignore-missing -c SHA256SUMS` or
+   `gh attestation verify FILE --repo charles2ke/crabs`.
 
 If a release exists with no sdist/wheel and auto-generated notes, it was created
 outside the workflow. Re-run `release.yml` via `workflow_dispatch` with that tag;

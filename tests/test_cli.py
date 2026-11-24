@@ -7,12 +7,21 @@ import os
 import re
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from openclaw import __version__
-from openclaw.cli import EXIT_CONFIG_ERROR, EXIT_NO_SLOTS, build_parser, main
+from openclaw.cli import (
+    EXIT_CONFIG_ERROR,
+    EXIT_NO_SLOTS,
+    EXIT_PROVIDER_ERROR,
+    build_parser,
+    main,
+)
+
+LABEL = "FR consulate in Dublin, IE (short-stay)"
 
 
 def write_config(directory, filename="config.json", city="Dublin", **updates):
@@ -310,6 +319,90 @@ class CliTests(unittest.TestCase):
         )
         self.assertNotIn("secret-topic-123", output.getvalue())
         self.assertNotIn("a" * 30, output.getvalue())
+
+    def test_inventory_shows_only_the_heartbeat_host(self):
+        env = {"OPENCLAW_HEARTBEAT_URL": "https://hc-ping.example.invalid/ping/0f3c-token"}
+        with TemporaryDirectory() as tmp, patch.dict(os.environ, env):
+            path = write_config(tmp, heartbeat={"url": "${OPENCLAW_HEARTBEAT_URL}"})
+            with redirect_stdout(io.StringIO()) as output:
+                code = main(["--config", str(path), "--validate-config"])
+        self.assertEqual(code, EXIT_NO_SLOTS)
+        self.assertIn("heartbeat endpoint=https://hc-ping.example.invalid\n", output.getvalue())
+        self.assertNotIn("0f3c-token", output.getvalue())
+
+    def test_list_slots_prints_matches_without_alerting_or_saving(self):
+        with TemporaryDirectory() as tmp:
+            path = write_config(
+                tmp,
+                state_file=str(Path(tmp) / "state.json"),
+                min_seats=2,
+                notifiers=[{"type": "file", "path": str(Path(tmp) / "alerts.jsonl")}],
+                watches=[
+                    {
+                        "country_from": "IE",
+                        "country_to": "FR",
+                        "city": "Dublin",
+                        "provider": "mock",
+                        "options": {
+                            "booking_url": "https://book.example.invalid/slots",
+                            "slots": [
+                                {"date": "2099-03-03"},
+                                {"date": "2099-03-02", "time": "09:30", "seats": 2},
+                            ],
+                        },
+                    }
+                ],
+            )
+            with redirect_stdout(io.StringIO()) as output:
+                code = main(["--config", str(path), "--list-slots"])
+            created = sorted(item.name for item in Path(tmp).iterdir() if item != path)
+        self.assertEqual(code, EXIT_NO_SLOTS)
+        self.assertEqual(
+            output.getvalue().splitlines(),
+            [
+                f"{LABEL}: 1 of 2 offered slot(s) match the filters",
+                "  * 2099-03-02 09:30 - 2 seat(s) - https://book.example.invalid/slots",
+            ],
+        )
+        self.assertEqual(created, [])
+
+    def test_list_slots_reports_failures_and_portal_pauses(self):
+        until = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=1)
+        with TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            state.write_text(
+                json.dumps({"_openclaw": {"backoff_until": {LABEL: until.isoformat()}}}),
+                encoding="utf-8",
+            )
+            before = state.read_text(encoding="utf-8")
+            broken = {
+                "country_from": "IE",
+                "country_to": "DE",
+                "city": "Dublin",
+                "provider": "mock",
+                "options": {"slots": "not-a-list"},
+            }
+            path = write_config(tmp, state_file=str(state))
+            config = json.loads(path.read_text(encoding="utf-8"))
+            config["watches"].append(broken)
+            path.write_text(json.dumps(config), encoding="utf-8")
+            with redirect_stdout(io.StringIO()) as listed:
+                code = main(["--config", str(path), "--list-slots"])
+            with redirect_stdout(io.StringIO()) as stats:
+                main(["--config", str(path), "--stats"])
+            after = state.read_text(encoding="utf-8")
+        self.assertEqual(code, EXIT_PROVIDER_ERROR)
+        self.assertEqual(
+            listed.getvalue().splitlines(),
+            [
+                f"{LABEL}: skipped, portal asked to wait until {until.isoformat()}",
+                "DE consulate in Dublin, IE (short-stay): FAILED: "
+                "mock provider expects a list of slot entries",
+            ],
+        )
+        self.assertIn(f"{LABEL}: slots_seen=0", stats.getvalue())
+        self.assertIn(f"paused_until={until.isoformat()}", stats.getvalue())
+        self.assertEqual(after, before)
 
 
 if __name__ == "__main__":

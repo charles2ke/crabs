@@ -10,16 +10,31 @@ openclaw --config /etc/openclaw/dublin.json \
 Writes use temp-file `fsync` plus atomic replacement. A neighboring `.lock` file
 prevents overlap, and past appointment entries are pruned. `--bootstrap` only
 suppresses the first cold run. Alerts a notifier failed to deliver are retried
-from the state file on later runs, so keep the state file between runs.
+from the state file on later runs, so keep the state file between runs. The
+state file also remembers when a portal asked, through `Retry-After`, to wait.
+Runs before that time skip the watch and exit `3`.
+
+## Monitoring the watcher
+
+A scheduled watcher can stop without anyone noticing, for example after a host
+reboot, an expired cache, or a disabled workflow. Configure a
+[`heartbeat`](configuration.md#top-level-configuration) ping URL from a service
+such as healthchecks.io or an Uptime Kuma push monitor. Set that service's
+expected period to your schedule plus a grace period. Open Claw pings it after
+every completed cycle, including cycles where a portal failed, so the service
+alerts you only when runs stop completing. The ping URL contains a token, so
+keep it in an environment variable or secret, such as `OPENCLAW_HEARTBEAT_URL`.
 
 ## GitHub Actions
 
 `.github/workflows/watch.yml` runs every 30 minutes and manually. It restores and
 saves `.openclaw` with Actions cache, serializes runs through concurrency, and
 bootstraps a cold cache. Add referenced environment values as repository secrets.
+The poll step passes the optional `OPENCLAW_HEARTBEAT_URL` secret for a config
+`heartbeat`.
 Caches are branch-scoped and may be evicted; public repositories expose logs.
-Provider exit `3` and lock exit `4` are warnings, while configuration failures
-fail the workflow.
+Provider exit `3` (a failed or paused watch) and lock exit `4` are warnings,
+while configuration failures fail the workflow.
 
 The cache uses a unique `openclaw-state-<run_id>` key and a shared restore
 prefix, so each run restores the newest state and saves an updated copy. Actions

@@ -26,9 +26,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
-from typing import Any
+from typing import Any, Mapping
 
-from ..auth import MAX_RESPONSE_BYTES, Session, redact_url
+from ..auth import (
+    MAX_RESPONSE_BYTES,
+    Session,
+    lower_headers,
+    raise_if_rate_limited,
+    redact_url,
+    requested_delay,
+)
 from ..models import Slot, Watch
 from ._portal_common import CHALLENGE_HINT, looks_like_challenge
 from .base import (
@@ -95,8 +102,13 @@ class HttpJsonProvider(Provider):
             ) as response:
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
         except urllib.error.HTTPError as exc:
-            raw = exc.read(MAX_RESPONSE_BYTES + 1)
-            self._raise_if_challenge(url, raw)
+            try:
+                raw = exc.read(MAX_RESPONSE_BYTES + 1)
+            finally:
+                exc.close()
+            response_headers = lower_headers(exc.headers)
+            self._raise_if_challenge(url, raw, exc.code, response_headers)
+            raise_if_rate_limited(url, exc.code, response_headers)
             raise ProviderError(
                 f"request to {redact_url(url)!r} failed: HTTP {exc.code}"
             ) from exc
@@ -117,10 +129,11 @@ class HttpJsonProvider(Provider):
             return self._retry_after_auth_failure(watch, session, url, headers, exc)
 
         if status >= 400:
-            self._raise_if_challenge(url, raw)
+            self._raise_if_challenge(url, raw, status, session.last_headers)
         if status in (401, 403):
             return self._retry_after_auth_failure(watch, session, url, headers, None)
         if status >= 400:
+            raise_if_rate_limited(url, status, session.last_headers)
             raise ProviderError(f"request to {redact_url(url)!r} failed: HTTP {status}")
         return self._decode_json(url, raw)
 
@@ -150,20 +163,30 @@ class HttpJsonProvider(Provider):
             ) from (original or exc)
 
         if status >= 400:
-            self._raise_if_challenge(url, raw)
+            self._raise_if_challenge(url, raw, status, session.last_headers)
         if status in (401, 403):
             raise AuthenticationError(
                 f"session expired and re-login failed for watch {watch.label!r}: HTTP {status}"
             ) from original
         if status >= 400:
+            raise_if_rate_limited(url, status, session.last_headers)
             raise ProviderError(f"request to {redact_url(url)!r} failed: HTTP {status}")
         return self._decode_json(url, raw)
 
     @staticmethod
-    def _raise_if_challenge(url: str, raw: bytes) -> None:
+    def _raise_if_challenge(
+        url: str,
+        raw: bytes,
+        status: int | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> None:
         text = raw.decode("utf-8", "replace")
         if looks_like_challenge(text):
-            raise ChallengeError(f"{CHALLENGE_HINT} (from {redact_url(url)!r})")
+            # A challenge served with 429/503 keeps the portal's requested delay.
+            raise ChallengeError(
+                f"{CHALLENGE_HINT} (from {redact_url(url)!r})",
+                retry_after=requested_delay(status, headers or {}) if status else None,
+            )
 
     @staticmethod
     def _decode_json(url: str, raw: bytes) -> Any:

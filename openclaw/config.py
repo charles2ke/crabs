@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import urllib.parse
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -17,6 +18,14 @@ from .models import Watch
 ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 ENV_ONLY_PATTERN = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 PASSWORDISH_KEYS = {"password", "pass", "secret", "api_key", "apikey", "access_token"}
+#: Upper bound for ``within_days``; also keeps date arithmetic far from overflow.
+MAX_WITHIN_DAYS = 3650
+WEEKDAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+_WEEKDAY_NUMBERS = {
+    **{name: number for number, name in enumerate(WEEKDAY_NAMES)},
+    **{name[:3]: number for number, name in enumerate(WEEKDAY_NAMES)},
+}
+HEARTBEAT_DEFAULT_TIMEOUT = 10.0
 
 
 class ConfigError(ValueError):
@@ -40,6 +49,12 @@ class Config:
     health: Mapping[str, Any] = field(default_factory=dict)
     #: Slots offering fewer seats than this are ignored (per-watch overridable).
     min_seats: int = 1
+    #: Only slots at most this many days after today (UTC) are kept (per-watch overridable).
+    within_days: int | None = None
+    #: Allowed slot weekdays, Monday is 0 (per-watch overridable).
+    weekdays: tuple[int, ...] | None = None
+    #: Dead man's switch pinged after every completed cycle: ``url`` and ``timeout``.
+    heartbeat: Mapping[str, Any] | None = None
 
 
 def missing_env_vars(value: Any) -> tuple[str, ...]:
@@ -87,10 +102,12 @@ def _parse_date(raw: Any, label: str) -> date | None:
         raise ConfigError(f"invalid {label} date {raw!r}: expected YYYY-MM-DD") from exc
 
 
-def _parse_min_seats(raw: Any, label: str) -> int | None:
+def _parse_positive_int(raw: Any, label: str, maximum: int | None = None) -> int | None:
     if raw is None:
         return None
     message = f"{label} must be a positive integer"
+    if maximum is not None:
+        message += f" no greater than {maximum}"
     if isinstance(raw, bool):
         raise ConfigError(message)
     if isinstance(raw, int):
@@ -103,9 +120,55 @@ def _parse_min_seats(raw: Any, label: str) -> int | None:
         if not math.isfinite(number) or not number.is_integer():
             raise ConfigError(message)
         value = int(number)
-    if value < 1:
+    if value < 1 or (maximum is not None and value > maximum):
         raise ConfigError(message)
     return value
+
+
+def _parse_weekdays(raw: Any, label: str) -> tuple[int, ...] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or not raw:
+        raise ConfigError(f"{label} must be a non-empty list of weekday names")
+    numbers: set[int] = set()
+    for item in raw:
+        number = _WEEKDAY_NUMBERS.get(item.strip().lower()) if isinstance(item, str) else None
+        if number is None:
+            raise ConfigError(
+                f"{label} has an unknown weekday {item!r}; use names such as 'mon' or 'monday'"
+            )
+        numbers.add(number)
+    return tuple(sorted(numbers))
+
+
+def _parse_heartbeat(value: Any) -> Mapping[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ConfigError("'heartbeat' must be an object")
+    unknown = set(value) - {"url", "timeout"}
+    if unknown:
+        raise ConfigError(f"'heartbeat' has unknown settings: {', '.join(sorted(unknown))}")
+    # Ping URLs embed a secret token, so errors below never echo the URL.
+    url = value.get("url")
+    if not isinstance(url, str) or not url:
+        raise ConfigError(
+            "'heartbeat.url' is required and must not be empty; is its environment variable set?"
+        )
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        valid = parsed.scheme.lower() in ("http", "https") and bool(parsed.hostname)
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ConfigError("'heartbeat.url' must be an http(s) URL with a host")
+    try:
+        timeout = float(value.get("timeout", HEARTBEAT_DEFAULT_TIMEOUT))
+    except (TypeError, ValueError) as exc:
+        raise ConfigError("'heartbeat.timeout' must be numeric") from exc
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ConfigError("'heartbeat.timeout' must be greater than 0")
+    return {"url": url, "timeout": timeout}
 
 
 def _require_env_secret(value: Any, label: str) -> None:
@@ -222,6 +285,11 @@ def _validate_notifier_secrets(notifiers: Any) -> None:
             _require_env_secret(spec.get("token"), "pushover token")
 
 
+def _validate_heartbeat_secret(heartbeat: Any) -> None:
+    if isinstance(heartbeat, Mapping):
+        _require_env_secret(heartbeat.get("url"), "heartbeat url")
+
+
 def _parse_clock(raw: Any, label: str) -> None:
     try:
         datetime.strptime(str(raw), "%H:%M")
@@ -283,6 +351,7 @@ def parse_config(data: Mapping[str, Any]) -> Config:
             # are expanded to their environment values.
             _validate_auth(entry.get("options", {}).get("auth"))
     _validate_notifier_secrets(raw_data.get("notifiers"))
+    _validate_heartbeat_secret(raw_data.get("heartbeat"))
 
     expanded = _expand_env(raw_data)
     if not isinstance(expanded, Mapping):  # pragma: no cover - shape preserved
@@ -296,7 +365,11 @@ def parse_config(data: Mapping[str, Any]) -> Config:
     latest = _parse_date(data.get("latest"), "latest")
     if earliest and latest and earliest > latest:
         raise ConfigError("'earliest' must not be after 'latest'")
-    global_min_seats = _parse_min_seats(data.get("min_seats"), "'min_seats'")
+    global_min_seats = _parse_positive_int(data.get("min_seats"), "'min_seats'")
+    global_within_days = _parse_positive_int(
+        data.get("within_days"), "'within_days'", MAX_WITHIN_DAYS
+    )
+    global_weekdays = _parse_weekdays(data.get("weekdays"), "'weekdays'")
 
     watches: list[Watch] = []
     for entry in raw_watches:
@@ -355,7 +428,11 @@ def parse_config(data: Mapping[str, Any]) -> Config:
                 ),
                 earliest=watch_earliest,
                 latest=watch_latest,
-                min_seats=_parse_min_seats(entry.get("min_seats"), "watch 'min_seats'"),
+                min_seats=_parse_positive_int(entry.get("min_seats"), "watch 'min_seats'"),
+                within_days=_parse_positive_int(
+                    entry.get("within_days"), "watch 'within_days'", MAX_WITHIN_DAYS
+                ),
+                weekdays=_parse_weekdays(entry.get("weekdays"), "watch 'weekdays'"),
             )
         )
 
@@ -403,6 +480,9 @@ def parse_config(data: Mapping[str, Any]) -> Config:
             ),
         ),
         min_seats=global_min_seats if global_min_seats is not None else 1,
+        within_days=global_within_days,
+        weekdays=global_weekdays,
+        heartbeat=_parse_heartbeat(data.get("heartbeat")),
     )
 
 

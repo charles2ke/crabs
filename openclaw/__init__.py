@@ -28,6 +28,7 @@ from .providers import (
     ChallengeError,
     Provider,
     ProviderError,
+    RateLimitError,
     get_provider,
     register_provider,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "Provider",
     "ProviderError",
     "PushoverNotifier",
+    "RateLimitError",
     "SeenStore",
     "SlackNotifier",
     "Slot",

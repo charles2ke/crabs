@@ -21,8 +21,28 @@ class ChallengeError(AuthenticationError):
 
     Open Claw never solves or bypasses such challenges. The error exists so the
     monitor can report a distinct provider-health condition and a human can
-    decide how to proceed.
+    decide how to proceed. ``retry_after`` is the ``Retry-After`` delay in
+    seconds when the challenge came with HTTP 429 or 503, and ``None``
+    otherwise; the monitor pauses the watch for it as for
+    :class:`RateLimitError`.
     """
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class RateLimitError(ProviderError):
+    """Raised when a portal asks clients to slow down.
+
+    That is HTTP 429, or HTTP 503 with a ``Retry-After`` header.
+    ``retry_after`` is the number of seconds the portal asked clients to wait,
+    or ``None`` when it did not say; the monitor pauses the watch until then.
+    """
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class Provider(abc.ABC):
