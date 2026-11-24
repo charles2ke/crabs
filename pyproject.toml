@@ -1,6 +1,6 @@
 [build-system]
 # 77 is the first release with PEP 639 license expressions and license-files.
-requires = ["setuptools>=77"]
+requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
